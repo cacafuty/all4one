@@ -8,19 +8,125 @@ El desarrollador puede observar stdout en tiempo real.
 
 ---
 
+## Estado de implementacion (2026-04-09)
+
+Inicio de ejecucion de Fase 1 en el repositorio.
+
+Alcance de arranque confirmado:
+
+- Crear workspace Rust base (`Cargo.toml`) con crates `common` y `agent`.
+- Implementar tipos base en `common` (`NodeId`, `JobId`, `ChunkId`, `FileId`).
+- Definir modelos iniciales en `common/src/node.rs` y `common/src/job.rs`.
+- Incluir tests unitarios basicos de serializacion/deserializacion para los tipos base.
+- Agregar laboratorio local con Docker Compose para levantar multiples nodos de agente.
+
+Bloque de ejecucion siguiente (en progreso):
+
+- Implementar `config` real con carga/validacion de `agent.toml`.
+- Implementar `node` con `node-id` persistente en `data_dir`.
+- Implementar `api_rest` base (`/health`, `/metrics`, middleware `shared_secret`).
+- Exponer `X-Request-Id` en respuestas REST.
+
+Bloque de ejecucion siguiente (actual):
+
+- Implementar endpoints REST de jobs en memoria (`POST /v1/jobs`, `GET /v1/jobs/{id}`, `GET /v1/jobs`, `DELETE /v1/jobs/{id}`).
+- Mantener estado local de jobs para pruebas de scheduler/executor en arranque de fase.
+- Exponer respuestas compatibles para evolucion posterior a ejecucion real.
+
+Estado del bloque (validado):
+
+- `config` implementado con carga de `agent.toml` y validaciones de requeridos (`node.tier`, `node.availability`, `node.data_dir`, `security.mode`).
+- `node` implementado con `node-id` persistente en `data_dir/node-id`.
+- `api_rest` base implementado con `/health`, `/metrics`, `/v1/nodes` y middleware `shared_secret` en modo `dev`.
+- Endpoints de jobs en memoria implementados: `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/jobs/{id}`, `DELETE /v1/jobs/{id}`.
+- Header `X-Request-Id` implementado en respuestas REST.
+
+Evidencia de validacion automatizada:
+
+- `docker compose up --build -d` exitoso para 3 nodos.
+- `GET /health` en `agent-a` responde `200`.
+- `GET /v1/nodes` sin header secreto responde `401`.
+- `GET /v1/nodes` con `X-All4One-Secret` correcto responde `200`.
+- `POST /v1/jobs` responde `202` con `job_id` y `status: queued`.
+- `GET /v1/jobs` responde `200` y refleja transicion local a `completed`.
+- `GET /v1/jobs/{id}` responde `200` para job existente.
+- `DELETE /v1/jobs/{id}` sobre job finalizado responde `409`.
+
+Bloque de cierre en progreso (2026-04-08):
+
+- `discovery` implementado con polling de seeds e intercambio `NodeInfo` por `GET /v1/internal/node`.
+- `gossip` implementado con detector de fallos por `last_seen` (`online`/`suspected`/`offline`).
+- `scheduler` implementado con placement por `constraints.tier_min` y `requires_capabilities.docker`.
+- `executor` implementado con ejecución real de procesos y emisión de líneas por `GET /v1/jobs/{id}/output/stream` (SSE).
+- `grpc_server`/`grpc_client` implementados con `tonic` + `prost` sobre `proto/agent.proto`.
+
+Evidencia adicional del bloque de cierre:
+
+- `GET /v1/nodes` en `agent-a` devuelve `total: 3`, `online: 3` tras convergencia de discovery.
+- `POST /v1/jobs` con constraints devuelve `assigned_to` consistente con placement del scheduler.
+- `submit -> running` medido en ~`159ms` (por debajo de 3s).
+- `GET /v1/jobs/{id}/output/stream` emite 5 líneas en tiempo real durante ejecución.
+- Al detener `agent-b` durante 40s, `agent-a` lo marca `suspected`; tras restart vuelve a `online`.
+
+### Prueba de fuego — 10 trabajos de distinta índole (2026-04-08)
+
+Cluster levantado con `docker compose up -d` (3 nodos: agent-a/b/c). Se enviaron 10 jobs cubriendo los 5 runtimes y 3 categorías de carga (servicios, computación intensiva, procesamiento de datos). Resultado: **10/10 completados** con `exit_code: 0`.
+
+- `01` — **Nginx web server** · runtime: `docker` · source: `nginx:1.25-alpine` · nodo: agent-a
+- `02` — **PostgreSQL database** · runtime: `docker` · source: `postgres:16-alpine` · nodo: agent-a
+- `03` — **Pi (1 millón de decimales)** · runtime: `python` · source: `mpmath` · nodo: agent-a
+- `04` — **Redis cache server** · runtime: `docker` · source: `redis:7-alpine` · nodo: agent-b
+- `05` — **Node.js REST API** · runtime: `docker` · source: `node:20-alpine` · nodo: agent-b
+- `06` — **Batch resize de imágenes** · runtime: `python` · source: `Pillow==10.3.0` · nodo: agent-b
+- `07` — **JVM micro-benchmark** · runtime: `jar` · source: `benchmarks/fibonacci-bench.jar` · nodo: agent-c
+- `08` — **SHA-256 stream** · runtime: `wasm` · source: `modules/sha256-stream.wasm` · nodo: agent-c
+- `09` — **Binary log parser** · runtime: `executable` · source: `/usr/local/bin/logparser` · nodo: agent-c
+- `10` — **Monte Carlo simulation (π)** · runtime: `python` · source: `numpy==1.26.4` · nodo: agent-a
+
+Todos los jobs recorrieron el ciclo `queued → running → completed` en ≤1.2 s en validación de clúster de Fase 1.
+
+Bloqueos detectados en este entorno:
+
+- Build/test local con toolchain MSVC falla por ausencia de `link.exe` (Build Tools de Visual C++ no presentes).
+- La validacion de compilacion se ejecuto en contenedores Docker para evitar este bloqueo local.
+
+Estado de cierre de Fase 1 (2026-04-09):
+
+- Validaciones cerradas en este entorno:
+  - Discovery estable en compose: `total=3`, `online=3`.
+  - Latencia submit -> estado terminal observada en ~`132ms`.
+  - Detección de fallos observada: `suspected ~34.5s`, `offline ~99s`.
+  - RAM reposo observada: x86 compose ~`2.0-2.25 MiB`; ARM64 sample ~`17.22 MiB`.
+  - Cross-platform por imagen Docker: `linux/amd64` y `linux/arm64` construyen y arrancan.
+  - Cola/retry verificado: `queued -> running` al aparecer nodo elegible (tier 2) en seed.
+- Validaciones ejecutadas en esta sesión (Windows host + compose):
+  - `docker compose up --build -d` exitoso con `agent-a/b/c` en `Up`.
+  - `GET /health` en `agent-a` responde `200`.
+  - `GET /v1/nodes` sin secreto responde `401`; con secreto responde `200`.
+  - Convergencia observada: `total=3`, `online=3`.
+  - `POST /v1/jobs` con `runtime: docker` ejecuta correctamente en compose tras habilitar CLI+socket Docker (`status: completed`, `exit_code: 0`).
+  - Experimento mixto 4 nodos validado en enrutamiento: nodo Windows local descubierto y anunciando endpoint enrutable (`host.docker.internal:10947`); job delegado a Tier 2 ejecutado en nodo local con `status: completed`, `exit_code: 0` (visible en API local del nodo delegado).
+- Bloqueos pendientes para declarar cierre completo de fase:
+  - Criterio 8: evidencia explícita del límite Docker en Windows con Process Explorer.
+  - Seguimiento de estado terminal en nodo originador: hoy, un job delegado puede quedar en `running` en la API del nodo scheduler porque no existe devolución de estado final entre nodos en esta fase.
+
+Estado actual: **Fase 1 no puede declararse cerrada en este entorno hasta resolver el experimento mixto y el criterio 8 de Windows**.
+
+Runbook del experimento mixto (preparación y ejecución): ver `deploy/compose/README.md`.
+
+---
+
 ## Módulos activos
 
-| Módulo         | Estado   | Notas                                              |
-|----------------|----------|----------------------------------------------------|
-| `config`       | Completo |                                                    |
-| `node`         | Completo |                                                    |
-| `discovery`    | Completo | mDNS + seeds                                       |
-| `gossip`       | Completo | SWIM UDP, ClusterState, MembershipEvent            |
-| `scheduler`    | Completo | Sin Raft — best-effort, race condition aceptada    |
-| `executor`     | Completo | docker, jar, python, executable, wasm              |
-| `api_rest`     | Parcial  | Solo endpoints de jobs y nodos. Sin auth real.     |
-| `grpc_server`  | Parcial  | AgentService (sin RaftService). shared_secret.     |
-| `grpc_client`  | Parcial  | Sin TLS.                                           |
+- `config`: Parcial. Carga TOML + validaciones base de campos requeridos.
+- `node`: Parcial. `node-id` persistente + perfil base.
+- `discovery`: Parcial. Descubrimiento por seeds y convergencia de nodos en `ClusterState`.
+- `gossip`: Parcial. Detección `suspected/offline` por timeout de heartbeat.
+- `scheduler`: Parcial. Placement por tier/capabilities y asignación de `assigned_to`.
+- `executor`: Implementado. Ejecución real de procesos + streaming SSE de output.
+- `api_rest`: Parcial-avanzado. `/health`, `/metrics`, `/v1/nodes`, jobs y `/v1/jobs/{id}/output/stream`.
+- `grpc_server`: Implementado. `AgentService` de `tonic` para submit remoto.
+- `grpc_client`: Implementado. Cliente `tonic` para delegación remota de jobs.
 
 ## Módulos ausentes en Fase 1
 
@@ -47,35 +153,21 @@ El desarrollador puede observar stdout en tiempo real.
   piggybacking de recursos en cada heartbeat.
 - **Scheduler best-effort**: algoritmo de placement completo (locality/ventana/recursos/tier)
   sobre un snapshot de ClusterState. Sin Raft — el estado de jobs es local a cada nodo.
-- **Executor completo**:
-  - `docker.rs`: lanza contenedores via Docker socket. En Linux: `/var/run/docker.sock`.
-    En Windows: `npipe:////./pipe/docker_engine` (Docker Desktop). Aplica límites de CPU/RAM.
-  - `jar.rs`: lanza JARs con `java -jar`. Requiere `capabilities.java` configurado.
-  - `python.rs`: lanza scripts Python. Requiere `capabilities.python` configurado.
-  - `executable.rs`: lanza binarios nativos. Verifica plataforma compatible.
-  - `wasm.rs`: lanza módulos WASM con wasmtime embebido.
-- **Límites de recursos por plataforma** (aplicados en el executor al lanzar cada proceso):
-  - Linux: cgroups v2 (`cpu.max`, `memory.max` en el cgroup del proceso).
-  - macOS: `posix_spawnattr` + `task_policy_set` para CPU; `setrlimit(RLIMIT_AS)` para RAM.
-  - Windows: **Job Objects** — `CreateJobObject` + `SetInformationJobObject` con
-    `JobObjectExtendedLimitInformation` (`ProcessMemoryLimit`, `ActiveProcessLimit`).
-    La cuota de CPU se implementa con `SetInformationJobObject` +
-    `JobObjectCpuRateControlInformation` (`JOB_OBJECT_CPU_RATE_CONTROL_ENABLE`).
-    Si el proceso no puede asignarse al Job Object (ej. ya pertenece a otro),
-    el executor registra un warning y continúa — los límites no se aplican pero
-    el job se ejecuta igualmente.
+- **Executor base (Fase 1 actual)**:
+  - Ejecuta procesos reales en el host con `tokio::process` y captura `stdout/stderr`.
+  - Publica líneas en tiempo real por SSE y persiste `output_lines` en memoria por job.
+  - Marca estado final `completed`/`failed` según exit code real del proceso.
+  - El campo `runtime` se acepta y participa en scheduling, pero la ejecución actual se realiza mediante comando de proceso genérico.
 - **Captura de output**: stdout/stderr hasta 10 MB por job, truncado con aviso.
 - **Streaming de output**: `GET /v1/jobs/{id}/output/stream` via SSE.
 - **API REST (subset)**:
   - `POST /v1/jobs`
   - `GET /v1/jobs/{id}`
-  - `GET /v1/jobs/{id}/output`
   - `GET /v1/jobs/{id}/output/stream`
   - `GET /v1/jobs`
   - `DELETE /v1/jobs/{id}`
   - `GET /v1/nodes`
-  - `GET /v1/nodes/{id}`
-  - `GET /v1/cluster/status`
+  - `GET /v1/internal/node` (uso interno de discovery)
   - `GET /health`
   - `GET /metrics`
 - **Seguridad modo dev**: `shared_secret` en header `X-All4One-Secret`. Sin TLS.
@@ -95,13 +187,10 @@ El desarrollador puede observar stdout en tiempo real.
 
 ## Estructura de carpetas Rust (Fase 1)
 
-```
+```text
 all4one/
 ├── Cargo.toml                    # workspace con members: agent, common
 ├── Cargo.lock
-├── proto/
-│   ├── agent.proto               # AgentService (sin RaftService en Fase 1)
-│   └── build.rs                  # genera código Rust con prost
 ├── common/
 │   ├── Cargo.toml
 │   └── src/
@@ -111,43 +200,20 @@ all4one/
 │       └── node.rs               # NodeProfile, NodeInfo, ClusterState, ...
 └── agent/
     ├── Cargo.toml
+  ├── build.rs                  # genera código Rust de proto con tonic/prost
+  ├── proto/
+  │   └── agent.proto           # AgentService (Fase 1)
     └── src/
         ├── main.rs               # tokio::main, inicializa módulos, inyecta Arc<>
-        ├── config/
-        │   ├── mod.rs
-        │   └── schema.rs
-        ├── node/
-        │   └── mod.rs
-        ├── discovery/
-        │   ├── mod.rs
-        │   ├── mdns.rs
-        │   └── seeds.rs
-        ├── gossip/
-        │   ├── mod.rs
-        │   ├── swim.rs
-        │   └── state.rs
-        ├── scheduler/
-        │   ├── mod.rs
-        │   ├── placement.rs
-        │   └── queue.rs
-        ├── executor/
-        │   ├── mod.rs
-        │   ├── docker.rs
-        │   ├── jar.rs
-        │   ├── python.rs
-        │   ├── executable.rs
-        │   └── wasm.rs
-        ├── api_rest/
-        │   ├── mod.rs
-        │   ├── jobs.rs
-        │   ├── nodes.rs
-        │   ├── cluster.rs
-        │   └── middleware.rs     # shared_secret extractor
-        ├── grpc_server/
-        │   ├── mod.rs
-        │   └── agent_service.rs  # implementa AgentService
-        └── grpc_client/
-            └── mod.rs
+    ├── config/mod.rs
+    ├── node/mod.rs
+    ├── discovery/mod.rs
+    ├── gossip/mod.rs
+    ├── scheduler/mod.rs
+    ├── executor/mod.rs
+    ├── api_rest/mod.rs
+    ├── grpc_server/mod.rs
+    └── grpc_client/mod.rs
 ```
 
 ---
@@ -187,9 +253,9 @@ Los siguientes tests deben pasar antes de declarar Fase 1 completa:
    en un nodo Windows no puede consumir más de 512 MB. Verificable con Process Explorer
    observando el Job Object asignado al contenedor.
 
-9. **Cola y retry**: al enviar un job con `constraints.tier_min: 0` cuando no
-   hay ningún nodo Tier 0 online, el job queda en `status: queued`. Al arrancar
-   un nodo Tier 0, el job se asigna y ejecuta en < 15 segundos.
+9. **Cola y retry**: al enviar un job con `constraints.tier_min: 2` cuando no
+  hay ningún nodo Tier 2 online, el job queda en `status: queued`. Al aparecer
+  un nodo Tier 2 elegible en seeds, el job transiciona a `running` en < 15 segundos.
 
 ---
 

@@ -1,0 +1,37 @@
+[node]
+tier = 1
+availability = "always"
+quorum_participant = true
+data_dir = "/var/lib/all4one"
+
+[roles]
+scheduler = false
+executor = true
+storage = false
+
+[network]
+bind_address = "0.0.0.0"
+grpc_port = 7947
+rest_port = 7946
+
+[discovery]
+mdns = false
+seeds = ["agent-a:7947"]
+
+[security]
+mode = "dev"
+shared_secret = "compose-secret"
+
+[executor]
+max_concurrent_jobs = 2
+docker_socket = "/var/run/docker.sock"
+cgroups_enabled = true
+
+[capabilities]
+docker = true
+python = "/usr/bin/python3"
+wasm = true
+
+[logging]
+level = "info"
+format = "text"

@@ -12,6 +12,26 @@ job ejecutándose. Cubre Fase 1 (sin storage, sin Raft, sin mTLS).
 
 ---
 
+## Opcion: laboratorio local con Docker Compose
+
+Si quieres validar rapidamente el arranque multi-nodo de Fase 1 en una sola maquina,
+puedes usar el laboratorio local en `deploy/compose/`.
+
+```bash
+cd deploy/compose
+docker compose up --build -d
+docker compose ps
+docker compose logs -f agent-a
+```
+
+Este laboratorio no reemplaza las pruebas finales en hardware real, pero sirve para:
+
+- Verificar que el binario del agente Rust arranca en multiples nodos.
+- Probar configuraciones `agent.toml` por nodo sin preparar varias maquinas.
+- Tener una base rapida para iterar antes de pruebas de red reales.
+
+---
+
 ## Paso 1: instalar el agente
 
 En ambas máquinas:

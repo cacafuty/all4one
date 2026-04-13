@@ -347,6 +347,9 @@ X-All4One-Secret: mysecret
 
 ### GET /v1/nodes/{node_id}
 
+> Estado actual (Fase 1 implementada): este endpoint no está expuesto todavía.
+> Usar `GET /v1/nodes` y filtrar por `id` en cliente.
+
 **Response** `200 OK`: mismo schema que un elemento de `nodes[]` en `GET /v1/nodes`.
 
 `404 Not Found`: ErrorResponse `NODE_NOT_FOUND`
@@ -356,6 +359,9 @@ X-All4One-Secret: mysecret
 ## Clúster
 
 ### GET /v1/cluster/status
+
+> Estado actual (Fase 1 implementada): este endpoint no está expuesto todavía.
+> Para estado básico de clúster usar `GET /health` + `GET /v1/nodes`.
 
 **Request**
 ```

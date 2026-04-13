@@ -1,0 +1,28 @@
+[package]
+name = "all4one-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+all4one-common = { path = "../common" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = "0.8"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+chrono = { workspace = true }
+uuid = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tonic-build = "0.12"
+protoc-bin-vendored = "3"

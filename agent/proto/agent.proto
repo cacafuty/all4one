@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package all4one.v1;
+
+message SubmitJobRequest {
+  string runtime = 1;
+  string source = 2;
+  repeated string command = 3;
+  uint32 cpu_cores = 4;
+  uint32 memory_mb = 5;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+  string status = 2;
+  string assigned_to = 3;
+  string created_at = 4;
+}
+
+service AgentService {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+}
