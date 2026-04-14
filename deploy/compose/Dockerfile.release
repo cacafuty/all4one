@@ -1,0 +1,40 @@
+# Downloads a pre-built all4one-agent binary from a GitHub Release.
+# Supports linux/amd64 and linux/arm64.
+#
+# Build args:
+#   VERSION   — tag without the 'v' prefix, e.g. 0.2.0 (required)
+#   GH_REPO   — GitHub owner/repo, e.g. myorg/all4one (default: all4one/all4one)
+
+ARG VERSION
+ARG GH_REPO=all4one/all4one
+
+# ── pull docker CLI so executors can launch containers ──────────────────────
+FROM docker:29.2.0-cli AS dockercli
+
+# ── runtime image ─────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+ARG VERSION
+ARG GH_REPO=all4one/all4one
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) ARCHIVE="all4one-agent-linux-x86_64.tar.gz" ;; \
+      arm64) ARCHIVE="all4one-agent-linux-arm64.tar.gz"  ;; \
+      *)     echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; \
+    esac; \
+    URL="https://github.com/${GH_REPO}/releases/download/v${VERSION}/${ARCHIVE}"; \
+    echo "Downloading ${URL}"; \
+    curl -fsSL "${URL}" | tar xz -C /usr/local/bin; \
+    chmod +x /usr/local/bin/all4one-agent; \
+    all4one-agent --version
+
+WORKDIR /app
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+
+ENTRYPOINT ["all4one-agent"]

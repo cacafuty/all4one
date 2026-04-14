@@ -34,20 +34,39 @@ Este laboratorio no reemplaza las pruebas finales en hardware real, pero sirve p
 
 ## Paso 1: instalar el agente
 
+Los binarios pre-compilados están disponibles en la página de
+[GitHub Releases](https://github.com/all4one/all4one/releases).
+Cada release incluye archivos para las cuatro plataformas objetivo y un
+`checksums.sha256` para verificar la integridad.
+
 En ambas máquinas:
 
 ```bash
+# Reemplaza X.Y.Z con la versión deseada (p.ej. 0.2.0)
+VERSION=X.Y.Z
+BASE=https://github.com/all4one/all4one/releases/download/v${VERSION}
+
 # Linux x86_64
-curl -sSL https://releases.all4one.io/latest/all4one-agent-linux-x86_64 \
-  -o /usr/local/bin/all4one-agent && chmod +x /usr/local/bin/all4one-agent
+curl -sSL ${BASE}/all4one-agent-linux-x86_64.tar.gz | tar xz -C /usr/local/bin
+chmod +x /usr/local/bin/all4one-agent
 
 # Linux ARM64 (Raspberry Pi)
-curl -sSL https://releases.all4one.io/latest/all4one-agent-linux-aarch64 \
-  -o /usr/local/bin/all4one-agent && chmod +x /usr/local/bin/all4one-agent
+curl -sSL ${BASE}/all4one-agent-linux-arm64.tar.gz | tar xz -C /usr/local/bin
+chmod +x /usr/local/bin/all4one-agent
 
 # macOS ARM64
-curl -sSL https://releases.all4one.io/latest/all4one-agent-darwin-arm64 \
-  -o /usr/local/bin/all4one-agent && chmod +x /usr/local/bin/all4one-agent
+curl -sSL ${BASE}/all4one-agent-macos-arm64.tar.gz | tar xz -C /usr/local/bin
+chmod +x /usr/local/bin/all4one-agent
+
+# Windows x86_64 (PowerShell)
+# Descarga all4one-agent-windows-x86_64.zip desde la página de releases
+# y extrae all4one-agent.exe al directorio deseado.
+```
+
+Para verificar la integridad antes de ejecutar:
+
+```bash
+curl -sSL ${BASE}/checksums.sha256 | sha256sum --check --ignore-missing
 ```
 
 ---

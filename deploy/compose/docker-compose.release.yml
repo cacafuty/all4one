@@ -1,0 +1,76 @@
+# Compose file that uses pre-built binaries from a GitHub Release.
+# Usage:
+#   VERSION=0.2.0 docker compose -f docker-compose.release.yml up --build -d
+#
+# The VERSION variable must match an existing tag in the GitHub repository.
+# GH_REPO defaults to all4one/all4one — override if your repo differs:
+#   GH_REPO=myorg/all4one VERSION=0.2.0 docker compose -f docker-compose.release.yml up --build -d
+
+x-agent-build: &agent-build
+  context: ../..
+  dockerfile: deploy/compose/Dockerfile.release
+  args:
+    VERSION: ${VERSION:?VERSION is required, e.g. VERSION=0.2.0}
+    GH_REPO: ${GH_REPO:-all4one/all4one}
+
+services:
+  agent-a:
+    build: *agent-build
+    container_name: all4one-release-a
+    command: ["start", "--config", "/configs/agent-a.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - release_a_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "7946:7946"
+      - "7947:7947"
+    networks:
+      - all4one
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-b:
+    build: *agent-build
+    container_name: all4one-release-b
+    command: ["start", "--config", "/configs/agent-b.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - release_b_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8946:7946"
+      - "8947:7947"
+    depends_on:
+      - agent-a
+    networks:
+      - all4one
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-c:
+    build: *agent-build
+    container_name: all4one-release-c
+    command: ["start", "--config", "/configs/agent-c.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - release_c_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9946:7946"
+      - "9947:7947"
+    depends_on:
+      - agent-a
+    networks:
+      - all4one
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  release_a_data:
+  release_b_data:
+  release_c_data:
+
+networks:
+  all4one:
+    driver: bridge
