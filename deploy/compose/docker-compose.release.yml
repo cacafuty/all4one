@@ -3,7 +3,7 @@
 #   VERSION=0.2.0 docker compose -f docker-compose.release.yml up --build -d
 #
 # The VERSION variable must match an existing tag in the GitHub repository.
-# GH_REPO defaults to all4one/all4one — override if your repo differs:
+# GH_REPO defaults to cacafuty/all4one — override if your repo differs:
 #   GH_REPO=myorg/all4one VERSION=0.2.0 docker compose -f docker-compose.release.yml up --build -d
 
 x-agent-build: &agent-build
@@ -11,7 +11,7 @@ x-agent-build: &agent-build
   dockerfile: deploy/compose/Dockerfile.release
   args:
     VERSION: ${VERSION:?VERSION is required, e.g. VERSION=0.2.0}
-    GH_REPO: ${GH_REPO:-all4one/all4one}
+    GH_REPO: ${GH_REPO:-cacafuty/all4one}
 
 services:
   agent-a:
