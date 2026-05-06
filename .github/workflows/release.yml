@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.6)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -112,8 +118,18 @@ jobs:
           sha256sum ./* > checksums.sha256
           cat checksums.sha256
 
+      - name: Validate manual tag format
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          case "${{ github.event.inputs.tag }}" in
+            v*.*.*) echo "Tag format OK" ;;
+            *) echo "Invalid tag format. Expected vX.Y.Z"; exit 1 ;;
+          esac
+
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
