@@ -93,8 +93,9 @@ The GitHub release includes a pre-built `all4one-agent` for Linux x86-64, which 
 # Replace X.Y.Z with the latest version (e.g. 0.1.7)
 VERSION="0.1.7"
 mkdir -p "$HOME/bin"
-curl -L "https://github.com/cacafuty/all4one/releases/download/v${VERSION}/all4one-agent-x86_64-unknown-linux-gnu" \
-     -o "$HOME/bin/all4one-agent"
+curl -L "https://github.com/cacafuty/all4one/releases/download/v${VERSION}/all4one-agent-linux-x86_64.tar.gz" \
+     -o /tmp/all4one-agent.tar.gz
+tar -xzf /tmp/all4one-agent.tar.gz -C "$HOME/bin"
 chmod +x "$HOME/bin/all4one-agent"
 export PATH="$HOME/bin:$PATH"
 # Verify
