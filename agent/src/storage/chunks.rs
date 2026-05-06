@@ -1,14 +1,12 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use zstd::Encoder as ZstdEncoder;
 
 use super::{ObjectMetadata, StoragePolicy};
-
-const CHUNK_SIZE: usize = 64 * 1024 * 1024; // 64MB default
 
 /// Compute SHA256 hash of data
 pub fn sha256(data: &[u8]) -> String {
@@ -34,7 +32,11 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Apply erasure coding to data
-pub fn encode_erasure(data: &[u8], data_shards: usize, parity_shards: usize) -> Result<Vec<Vec<u8>>> {
+pub fn encode_erasure(
+    data: &[u8],
+    data_shards: usize,
+    parity_shards: usize,
+) -> Result<Vec<Vec<u8>>> {
     // Prefix with the actual data length (8 bytes LE) so decode_erasure can
     // strip zero-padding introduced when the last shard is padded to shard_size.
     let data_len = data.len() as u64;
@@ -42,7 +44,7 @@ pub fn encode_erasure(data: &[u8], data_shards: usize, parity_shards: usize) -> 
     prefixed.extend_from_slice(&data_len.to_le_bytes());
     prefixed.extend_from_slice(data);
 
-    let shard_size = (prefixed.len() + data_shards - 1) / data_shards;
+    let shard_size = prefixed.len().div_ceil(data_shards);
 
     let mut shards = Vec::new();
     for i in 0..data_shards {
@@ -64,7 +66,11 @@ pub fn encode_erasure(data: &[u8], data_shards: usize, parity_shards: usize) -> 
 }
 
 /// Decode erasure coded data (recover from shards)
-pub fn decode_erasure(shards: &[Vec<u8>], data_shards: usize, _parity_shards: usize) -> Result<Vec<u8>> {
+pub fn decode_erasure(
+    shards: &[Vec<u8>],
+    data_shards: usize,
+    _parity_shards: usize,
+) -> Result<Vec<u8>> {
     let mut combined = Vec::new();
     for i in 0..data_shards {
         if i < shards.len() {
@@ -75,7 +81,9 @@ pub fn decode_erasure(shards: &[Vec<u8>], data_shards: usize, _parity_shards: us
     // Strip the 8-byte length prefix written by encode_erasure, then trim
     // zero-padding that may have been added to fill the last shard.
     if combined.len() < 8 {
-        return Err(anyhow!("Erasure decoded data too short to contain length prefix"));
+        return Err(anyhow!(
+            "Erasure decoded data too short to contain length prefix"
+        ));
     }
     let data_len = u64::from_le_bytes(combined[..8].try_into().unwrap()) as usize;
     if 8 + data_len > combined.len() {
@@ -112,11 +120,11 @@ pub async fn put_chunks(
     for (i, shard) in shards.iter().enumerate() {
         let chunk_id = format!("{}-shard-{}", object_id, i);
         let chunk_path = chunks_dir.join(&chunk_id);
-        
+
         // Compute shard hash
         let shard_hash = sha256(shard);
         let metadata_path = format!("{}.meta", chunk_path.display());
-        
+
         fs::write(&chunk_path, shard)?;
         fs::write(
             &metadata_path,
@@ -127,7 +135,7 @@ pub async fn put_chunks(
                 data.len()
             ),
         )?;
-        
+
         chunk_paths.push(chunk_id);
     }
 
@@ -153,7 +161,7 @@ pub async fn get_chunks(data_dir: &Path, bucket: &str, key: &str) -> Result<Vec<
 
     // Lookup object metadata to get policy info
     let metadata = super::index::get_object(data_dir, bucket, key).await?;
-    
+
     // Parse policy to know data/parity shards and compression level
     let (data_shards, parity_shards, level) = match metadata.policy.as_str() {
         "hot" => (1, 0, 0),
@@ -213,13 +221,19 @@ mod tests {
     #[test]
     fn test_sha256() {
         let hash = sha256(b"hello");
-        assert_eq!(hash, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[test]
     fn test_sha256_empty() {
         let hash = sha256(b"");
-        assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
@@ -244,7 +258,7 @@ mod tests {
         let data = b"test data for hot storage";
         let shards = encode_erasure(data, 1, 0)?;
         assert_eq!(shards.len(), 1);
-        
+
         let recovered = decode_erasure(&shards, 1, 0)?;
         assert_eq!(data.to_vec(), recovered);
         Ok(())
@@ -255,7 +269,7 @@ mod tests {
         let data = b"test data for warm storage with some content";
         let shards = encode_erasure(data, 4, 2)?;
         assert_eq!(shards.len(), 6);
-        
+
         // Should be recoverable with just data shards
         let recovered = decode_erasure(&shards, 4, 2)?;
         assert_eq!(data.to_vec(), recovered);
@@ -266,7 +280,7 @@ mod tests {
     async fn test_put_get_hot_policy() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let data = b"hot storage test data";
-        
+
         let metadata = put_chunks(
             temp_dir.path(),
             "test-bucket",
@@ -291,15 +305,9 @@ mod tests {
     async fn test_put_get_warm_policy() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let data = b"warm storage test with compression and erasure coding";
-        
-        let metadata = put_chunks(
-            temp_dir.path(),
-            "bucket",
-            "key",
-            data,
-            StoragePolicy::Warm,
-        )
-        .await?;
+
+        let metadata =
+            put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Warm).await?;
 
         assert_eq!(metadata.policy, "warm");
         assert_eq!(metadata.replicas, 1);
@@ -313,23 +321,16 @@ mod tests {
     async fn test_data_corruption_detection() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let data = b"test data for corruption detection";
-        
-        put_chunks(
-            temp_dir.path(),
-            "bucket",
-            "key",
-            data,
-            StoragePolicy::Hot,
-        )
-        .await?;
+
+        put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Hot).await?;
 
         // Corrupt the stored data
         let chunks_dir = temp_dir.path().join("chunks").join("bucket");
         let shard_file = chunks_dir.join("bucket-key-shard-0");
-        
+
         if shard_file.exists() {
             fs::write(&shard_file, b"corrupted data")?;
-            
+
             // Should fail due to hash mismatch
             let result = get_chunks(temp_dir.path(), "bucket", "key").await;
             assert!(result.is_err(), "Should detect corruption");
@@ -360,11 +361,5 @@ mod tests {
         assert_eq!(StoragePolicy::Warm.zstd_level(), 3);
         assert_eq!(StoragePolicy::Cold.zstd_level(), 19);
         assert_eq!(StoragePolicy::Archive.zstd_level(), 22);
-    }
-}
-
-impl ToString for StoragePolicy {
-    fn to_string(&self) -> String {
-        format!("{:?}", self).to_lowercase()
     }
 }

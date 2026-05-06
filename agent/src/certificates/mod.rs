@@ -20,7 +20,6 @@ pub struct RevokedNode {
 
 /// Certificate manager for PKI operations
 pub struct CertificateManager {
-    data_dir: PathBuf,
     certs_dir: PathBuf,
     crl_file: PathBuf,
 }
@@ -30,9 +29,8 @@ impl CertificateManager {
         let data_dir = data_dir.as_ref().to_path_buf();
         let certs_dir = data_dir.join("certs");
         let crl_file = certs_dir.join("crl.json");
-        
+
         CertificateManager {
-            data_dir,
             certs_dir,
             crl_file,
         }
@@ -76,32 +74,34 @@ impl CertificateManager {
         // Save with proper permissions
         fs::write(&ca_crt_path, &cert_pem)?;
         fs::write(&ca_key_path, &key_pem)?;
-        
+
         #[cfg(unix)]
         fs::set_permissions(&ca_key_path, fs::Permissions::from_mode(0o600))?;
 
-        println!("INFO CA initialized at {:?}, ca.key perms: 0600", self.certs_dir);
+        println!(
+            "INFO CA initialized at {:?}, ca.key perms: 0600",
+            self.certs_dir
+        );
         Ok(())
     }
 
     /// Generate CA certificate PEM (10-year TTL)
     fn generate_ca_cert(&self) -> Result<(String, String)> {
-        let rcgen::CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec!["all4one-ca".to_string()])?;
-        
+        let rcgen::CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(vec!["all4one-ca".to_string()])?;
+
         let cert_pem = cert.pem();
         let key_pem = key_pair.serialize_pem();
-        
+
         Ok((cert_pem, key_pem))
     }
 
     /// Generate node certificate with 90-day TTL
-    pub async fn generate_node_cert(
-        &self,
-        node_id: Uuid,
-    ) -> Result<(String, String)> {
+    pub async fn generate_node_cert(&self, node_id: Uuid) -> Result<(String, String)> {
         self.ensure_dirs()?;
 
-        let rcgen::CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec![node_id.to_string()])?;
+        let rcgen::CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(vec![node_id.to_string()])?;
 
         let cert_pem = cert.pem();
         let key_pem = key_pair.serialize_pem();
@@ -111,11 +111,7 @@ impl CertificateManager {
 
     /// Sign a Certificate Signing Request (CSR) - simplified for now
     /// In production, this would validate the CSR before signing
-    pub async fn sign_csr(
-        &self,
-        node_id: Uuid,
-        _csr_pem: &str,
-    ) -> Result<String> {
+    pub async fn sign_csr(&self, node_id: Uuid, _csr_pem: &str) -> Result<String> {
         // For MVP, we generate a fresh cert instead of parsing/validating CSR
         let (cert, _key) = self.generate_node_cert(node_id).await?;
         Ok(cert)
@@ -125,41 +121,40 @@ impl CertificateManager {
     pub fn load_ca(&self) -> Result<CertificateDer<'static>> {
         let ca_path = self.certs_dir.join("ca.crt");
         let ca_pem = fs::read_to_string(&ca_path)?;
-        
+
         // Parse PEM
-        let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes())
-            .collect::<Result<Vec<_>, _>>()?;
-        
+        let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes()).collect::<Result<Vec<_>, _>>()?;
+
         if certs.is_empty() {
             return Err(anyhow!("No certificate found in CA file"));
         }
-        
-        Ok(certs[0].clone().into_owned().into())
+
+        Ok(certs[0].clone().into_owned())
     }
 
     /// Load node certificate from disk
     pub fn load_node_cert(&self) -> Result<CertificateDer<'static>> {
         let cert_path = self.certs_dir.join("node.crt");
         let cert_pem = fs::read_to_string(&cert_path)?;
-        
-        let certs = rustls_pemfile::certs(&mut cert_pem.as_bytes())
-            .collect::<Result<Vec<_>, _>>()?;
-        
+
+        let certs =
+            rustls_pemfile::certs(&mut cert_pem.as_bytes()).collect::<Result<Vec<_>, _>>()?;
+
         if certs.is_empty() {
             return Err(anyhow!("No certificate found in node cert file"));
         }
-        
-        Ok(certs[0].clone().into_owned().into())
+
+        Ok(certs[0].clone().into_owned())
     }
 
     /// Load node private key from disk
     pub fn load_node_key(&self) -> Result<PrivateKeyDer<'static>> {
         let key_path = self.certs_dir.join("node.key");
         let key_pem = fs::read_to_string(&key_path)?;
-        
+
         let mut reader = key_pem.as_bytes();
         let keys = rustls_pemfile::private_key(&mut reader)?;
-        
+
         keys.ok_or_else(|| anyhow!("No private key found in node key file"))
     }
 
@@ -171,7 +166,7 @@ impl CertificateManager {
 
         let crl_json = fs::read_to_string(&self.crl_file)?;
         let crl: Vec<RevokedNode> = serde_json::from_str(&crl_json)?;
-        
+
         Ok(crl.iter().any(|r: &RevokedNode| r.node_id == node_id))
     }
 
@@ -219,10 +214,10 @@ impl CertificateManager {
 
         fs::write(&cert_path, cert_pem)?;
         fs::write(&key_path, key_pem)?;
-        
+
         #[cfg(unix)]
         fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
-        
+
         fs::write(&ca_path, ca_pem)?;
 
         println!("INFO Node certificates saved, node.key perms: 0600");
@@ -287,4 +282,3 @@ mod tests {
         Ok(())
     }
 }
-

@@ -1,8 +1,6 @@
 use crate::api_rest::AppState;
 use crate::raft::TypeConfig;
-use openraft::raft::{
-    AppendEntriesRequest, InstallSnapshotRequest, VoteRequest,
-};
+use openraft::raft::{AppendEntriesRequest, InstallSnapshotRequest, VoteRequest};
 use tonic::{Request, Response, Status};
 
 pub mod proto_raft {
@@ -33,8 +31,8 @@ impl RaftService for RaftServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("raft: {e}")))?;
 
-        let payload = serde_json::to_vec(&resp)
-            .map_err(|e| Status::internal(format!("serialize: {e}")))?;
+        let payload =
+            serde_json::to_vec(&resp).map_err(|e| Status::internal(format!("serialize: {e}")))?;
 
         Ok(Response::new(proto_raft::RaftMessage { payload }))
     }
@@ -54,8 +52,8 @@ impl RaftService for RaftServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("raft: {e}")))?;
 
-        let payload = serde_json::to_vec(&resp)
-            .map_err(|e| Status::internal(format!("serialize: {e}")))?;
+        let payload =
+            serde_json::to_vec(&resp).map_err(|e| Status::internal(format!("serialize: {e}")))?;
 
         Ok(Response::new(proto_raft::RaftMessage { payload }))
     }
@@ -75,8 +73,8 @@ impl RaftService for RaftServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("raft: {e}")))?;
 
-        let payload = serde_json::to_vec(&resp)
-            .map_err(|e| Status::internal(format!("serialize: {e}")))?;
+        let payload =
+            serde_json::to_vec(&resp).map_err(|e| Status::internal(format!("serialize: {e}")))?;
 
         Ok(Response::new(proto_raft::RaftMessage { payload }))
     }

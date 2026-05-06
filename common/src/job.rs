@@ -44,10 +44,27 @@ pub struct JobSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobEvent {
-    Started { job_id: JobId, node_id: NodeId, at: DateTime<Utc> },
-    OutputLine { job_id: JobId, is_stderr: bool, line: String, at: DateTime<Utc> },
-    Completed { job_id: JobId, exit_code: i32, at: DateTime<Utc> },
-    Failed { job_id: JobId, error: String, at: DateTime<Utc> },
+    Started {
+        job_id: JobId,
+        node_id: NodeId,
+        at: DateTime<Utc>,
+    },
+    OutputLine {
+        job_id: JobId,
+        is_stderr: bool,
+        line: String,
+        at: DateTime<Utc>,
+    },
+    Completed {
+        job_id: JobId,
+        exit_code: i32,
+        at: DateTime<Utc>,
+    },
+    Failed {
+        job_id: JobId,
+        error: String,
+        at: DateTime<Utc>,
+    },
 }
 
 #[cfg(test)]

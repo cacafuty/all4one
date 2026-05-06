@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 pub fn node_id(data_dir: &str) -> Result<NodeId> {
     let data_dir = PathBuf::from(data_dir);
-    fs::create_dir_all(&data_dir).with_context(|| format!("cannot create data_dir {}", data_dir.display()))?;
+    fs::create_dir_all(&data_dir)
+        .with_context(|| format!("cannot create data_dir {}", data_dir.display()))?;
 
     let node_id_path = data_dir.join("node-id");
     if node_id_path.exists() {
@@ -80,11 +81,11 @@ fn parse_meminfo_kb(raw: &str, key: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use crate::config::schema::{
         CapabilitiesConfig, Config, DiscoveryConfig, ExecutorConfig, LoggingConfig, NetworkConfig,
         NodeConfig, RolesConfig, SecurityConfig,
     };
+    use std::path::Path;
 
     fn fake_config(data_dir: &Path) -> Config {
         Config {

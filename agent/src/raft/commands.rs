@@ -25,9 +25,7 @@ pub enum RaftCommand {
         grpc_endpoint: String,
     },
     /// Remove a cluster member.
-    RemoveMember {
-        node_id: String,
-    },
+    RemoveMember { node_id: String },
     /// Store a single-use enrolment token.
     StoreEnrollToken {
         token: String,
@@ -35,9 +33,7 @@ pub enum RaftCommand {
         issued_by: String,
     },
     /// Mark a token as consumed; fails if already used.
-    ConsumeEnrollToken {
-        token: String,
-    },
+    ConsumeEnrollToken { token: String },
 }
 
 // ---------------------------------------------------------------------------

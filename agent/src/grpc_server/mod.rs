@@ -5,9 +5,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 pub mod raft_service;
-use raft_service::{
-    proto_raft::raft_service_server::RaftServiceServer, RaftServiceImpl,
-};
+use raft_service::{proto_raft::raft_service_server::RaftServiceServer, RaftServiceImpl};
 
 #[derive(Clone)]
 struct ServiceImpl {
@@ -50,8 +48,7 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
 
         println!(
             "INFO gRPC submit queued job_id={} assigned_to={}",
-            submitted.job_id,
-            submitted.assigned_to,
+            submitted.job_id, submitted.assigned_to,
         );
 
         Ok(Response::new(proto::SubmitJobResponse {
@@ -90,9 +87,7 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
 
         println!(
             "INFO gRPC status report received job_id={} status={:?} source_node_id={}",
-            job_id,
-            status,
-            payload.source_node_id,
+            job_id, status, payload.source_node_id,
         );
 
         apply_terminal_job_update(self.state.clone(), job_id, status, exit_code, error)
@@ -112,7 +107,8 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
 
         // Join requests are served only by nodes that own CA private material.
         // This is expected to be the cluster bootstrap/issuer node.
-        let cert_manager = crate::certificates::CertificateManager::new(&self.state.config.node.data_dir);
+        let cert_manager =
+            crate::certificates::CertificateManager::new(&self.state.config.node.data_dir);
         if !cert_manager.has_ca_key() {
             return Err(Status::failed_precondition(
                 "This node is not a certificate issuer (missing CA key)",
@@ -150,10 +146,7 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
             .load_ca_pem()
             .map_err(|e| Status::internal(format!("Failed to load CA cert: {}", e)))?;
 
-        println!(
-            "INFO gRPC Join request from node_id={} granted",
-            node_id,
-        );
+        println!("INFO gRPC Join request from node_id={} granted", node_id,);
 
         Ok(Response::new(proto::JoinResponse {
             node_cert_pem,
@@ -213,10 +206,10 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
         )
         .await;
         let recv_policy = match payload.policy.as_str() {
-            "hot"     => crate::storage::StoragePolicy::Hot,
-            "cold"    => crate::storage::StoragePolicy::Cold,
+            "hot" => crate::storage::StoragePolicy::Hot,
+            "cold" => crate::storage::StoragePolicy::Cold,
             "archive" => crate::storage::StoragePolicy::Archive,
-            _         => crate::storage::StoragePolicy::Warm,
+            _ => crate::storage::StoragePolicy::Warm,
         };
         let _ = crate::storage::index::put_object(
             std::path::Path::new(&self.state.config.node.data_dir),
@@ -266,7 +259,10 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
                 let hash = crate::storage::chunks::sha256(&data);
                 println!(
                     "INFO gRPC FetchChunk served bucket={} key={} shard={} bytes={}",
-                    payload.bucket, payload.key, payload.shard_index, data.len()
+                    payload.bucket,
+                    payload.key,
+                    payload.shard_index,
+                    data.len()
                 );
                 Ok(Response::new(proto::FetchChunkResponse {
                     data,
@@ -280,8 +276,11 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
 }
 
 pub async fn start_background(state: AppState) {
-    let addr = format!("{}:{}", state.config.network.bind_address, state.config.network.grpc_port)
-        .parse();
+    let addr = format!(
+        "{}:{}",
+        state.config.network.bind_address, state.config.network.grpc_port
+    )
+    .parse();
 
     let Ok(addr) = addr else {
         eprintln!("ERROR invalid gRPC bind address");
@@ -289,7 +288,9 @@ pub async fn start_background(state: AppState) {
     };
 
     let svc = ServiceImpl { state };
-    let raft_svc = RaftServiceImpl { state: svc.state.clone() };
+    let raft_svc = RaftServiceImpl {
+        state: svc.state.clone(),
+    };
     tokio::spawn(async move {
         let result = tonic::transport::Server::builder()
             .add_service(proto::agent_service_server::AgentServiceServer::new(svc))

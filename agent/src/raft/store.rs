@@ -1,13 +1,12 @@
-use crate::raft::{RaftNodeId, TypeConfig};
 use crate::raft::commands::{EnrollToken, RaftCommand, RaftCommandResponse, RegisteredJob};
+use crate::raft::{RaftNodeId, TypeConfig};
 use chrono::Utc;
-use openraft::{
-    AnyError, BasicNode, Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState,
-    RaftLogReader, RaftSnapshotBuilder,
-    Snapshot, SnapshotMeta, StorageError, StorageIOError, StoredMembership, Vote,
-    storage::LogFlushed,
-};
 use openraft::storage::{RaftLogStorage, RaftStateMachine};
+use openraft::{
+    storage::LogFlushed, AnyError, BasicNode, Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId,
+    LogState, RaftLogReader, RaftSnapshotBuilder, Snapshot, SnapshotMeta, StorageError,
+    StorageIOError, StoredMembership, Vote,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -110,8 +109,7 @@ impl RaftLogReader<TypeConfig> for SledLogStore {
             let (k, v) = item.map_err(log_read_err)?;
             let index = decode_index(&k);
             if range.contains(&index) {
-                let entry: Entry<TypeConfig> =
-                    serde_json::from_slice(&v).map_err(log_read_err)?;
+                let entry: Entry<TypeConfig> = serde_json::from_slice(&v).map_err(log_read_err)?;
                 entries.push(entry);
             }
         }
@@ -123,24 +121,19 @@ impl RaftLogReader<TypeConfig> for SledLogStore {
 impl RaftLogStorage<TypeConfig> for SledLogStore {
     type LogReader = Self;
 
-    async fn get_log_state(
-        &mut self,
-    ) -> Result<LogState<TypeConfig>, StorageError<RaftNodeId>> {
+    async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<RaftNodeId>> {
         let meta = self.meta_tree();
         let tree = self.log_tree();
 
-        let last_purged: Option<LogId<RaftNodeId>> = match meta
-            .get("last_purged")
-            .map_err(log_read_err)?
-        {
-            Some(b) => Some(serde_json::from_slice(&b).map_err(log_read_err)?),
-            None => None,
-        };
+        let last_purged: Option<LogId<RaftNodeId>> =
+            match meta.get("last_purged").map_err(log_read_err)? {
+                Some(b) => Some(serde_json::from_slice(&b).map_err(log_read_err)?),
+                None => None,
+            };
 
         let last_log: Option<LogId<RaftNodeId>> = match tree.last().map_err(log_read_err)? {
             Some((_, v)) => {
-                let e: Entry<TypeConfig> =
-                    serde_json::from_slice(&v).map_err(log_read_err)?;
+                let e: Entry<TypeConfig> = serde_json::from_slice(&v).map_err(log_read_err)?;
                 Some(e.log_id)
             }
             None => None,
@@ -152,21 +145,14 @@ impl RaftLogStorage<TypeConfig> for SledLogStore {
         })
     }
 
-    async fn save_vote(
-        &mut self,
-        vote: &Vote<RaftNodeId>,
-    ) -> Result<(), StorageError<RaftNodeId>> {
+    async fn save_vote(&mut self, vote: &Vote<RaftNodeId>) -> Result<(), StorageError<RaftNodeId>> {
         let b = serde_json::to_vec(vote).map_err(vote_write_err)?;
-        self.meta_tree()
-            .insert("vote", b)
-            .map_err(vote_write_err)?;
+        self.meta_tree().insert("vote", b).map_err(vote_write_err)?;
         self.meta_tree().flush().map_err(vote_write_err)?;
         Ok(())
     }
 
-    async fn read_vote(
-        &mut self,
-    ) -> Result<Option<Vote<RaftNodeId>>, StorageError<RaftNodeId>> {
+    async fn read_vote(&mut self) -> Result<Option<Vote<RaftNodeId>>, StorageError<RaftNodeId>> {
         match self.meta_tree().get("vote").map_err(vote_read_err)? {
             Some(b) => Ok(Some(serde_json::from_slice(&b).map_err(vote_read_err)?)),
             None => Ok(None),
@@ -244,10 +230,7 @@ impl RaftLogStorage<TypeConfig> for SledLogStore {
         Ok(())
     }
 
-    async fn purge(
-        &mut self,
-        log_id: LogId<RaftNodeId>,
-    ) -> Result<(), StorageError<RaftNodeId>> {
+    async fn purge(&mut self, log_id: LogId<RaftNodeId>) -> Result<(), StorageError<RaftNodeId>> {
         let tree = self.log_tree();
         let meta = self.meta_tree();
 
@@ -284,13 +267,6 @@ impl SledStateMachine {
             None => RaftState::default(),
         };
         Ok(Self { db, state })
-    }
-
-    fn persist(&self) -> Result<(), StorageError<RaftNodeId>> {
-        let b = serde_json::to_vec(&self.state).map_err(sm_write_err)?;
-        self.db.insert("state", b).map_err(sm_write_err)?;
-        self.db.flush().map_err(sm_write_err)?;
-        Ok(())
     }
 
     fn apply_command(&mut self, cmd: RaftCommand) -> RaftCommandResponse {
@@ -334,7 +310,11 @@ impl SledStateMachine {
                 if let Some(job) = self.state.job_registry.get_mut(&job_id) {
                     job.status = status;
                     job.updated_at = Utc::now().to_rfc3339();
-                    RaftCommandResponse { success: true, error: None, data: None }
+                    RaftCommandResponse {
+                        success: true,
+                        error: None,
+                        data: None,
+                    }
                 } else {
                     RaftCommandResponse {
                         success: false,
@@ -345,7 +325,11 @@ impl SledStateMachine {
             }
             RaftCommand::AddMember { .. } | RaftCommand::RemoveMember { .. } => {
                 // Membership changes are handled by Raft itself; these are stored for reference.
-                RaftCommandResponse { success: true, error: None, data: None }
+                RaftCommandResponse {
+                    success: true,
+                    error: None,
+                    data: None,
+                }
             }
             RaftCommand::StoreEnrollToken {
                 token,
@@ -361,7 +345,11 @@ impl SledStateMachine {
                         used: false,
                     },
                 );
-                RaftCommandResponse { success: true, error: None, data: None }
+                RaftCommandResponse {
+                    success: true,
+                    error: None,
+                    data: None,
+                }
             }
             RaftCommand::ConsumeEnrollToken { token } => {
                 if let Some(t) = self.state.enroll_tokens.get_mut(&token) {
@@ -373,7 +361,11 @@ impl SledStateMachine {
                         }
                     } else {
                         t.used = true;
-                        RaftCommandResponse { success: true, error: None, data: None }
+                        RaftCommandResponse {
+                            success: true,
+                            error: None,
+                            data: None,
+                        }
                     }
                 } else {
                     RaftCommandResponse {
@@ -394,12 +386,10 @@ pub struct SledSnapshotBuilder {
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for SledSnapshotBuilder {
-    async fn build_snapshot(
-        &mut self,
-    ) -> Result<Snapshot<TypeConfig>, StorageError<RaftNodeId>> {
+    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<RaftNodeId>> {
         let data = serde_json::to_vec(&self.state).map_err(sm_write_err)?;
         let snapshot_id = uuid::Uuid::new_v4().to_string();
-        let last_applied = self.state.last_applied.clone();
+        let last_applied = self.state.last_applied;
         let membership = self.state.last_membership.clone();
         Ok(Snapshot {
             meta: SnapshotMeta {
@@ -419,12 +409,14 @@ impl RaftStateMachine<TypeConfig> for SledStateMachine {
 
     async fn applied_state(
         &mut self,
-    ) -> Result<(Option<LogId<RaftNodeId>>, StoredMembership<RaftNodeId, BasicNode>), StorageError<RaftNodeId>>
-    {
-        Ok((
-            self.state.last_applied.clone(),
-            self.state.last_membership.clone(),
-        ))
+    ) -> Result<
+        (
+            Option<LogId<RaftNodeId>>,
+            StoredMembership<RaftNodeId, BasicNode>,
+        ),
+        StorageError<RaftNodeId>,
+    > {
+        Ok((self.state.last_applied, self.state.last_membership.clone()))
     }
 
     async fn apply<I>(
@@ -437,21 +429,28 @@ impl RaftStateMachine<TypeConfig> for SledStateMachine {
     {
         let mut responses = Vec::new();
         for entry in entries {
-            self.state.last_applied = Some(entry.log_id.clone());
+            self.state.last_applied = Some(entry.log_id);
             let resp = match entry.payload {
-                EntryPayload::Blank => {
-                    RaftCommandResponse { success: true, error: None, data: None }
-                }
+                EntryPayload::Blank => RaftCommandResponse {
+                    success: true,
+                    error: None,
+                    data: None,
+                },
                 EntryPayload::Normal(cmd) => self.apply_command(cmd),
                 EntryPayload::Membership(m) => {
-                    self.state.last_membership =
-                        StoredMembership::new(Some(entry.log_id), m);
-                    RaftCommandResponse { success: true, error: None, data: None }
+                    self.state.last_membership = StoredMembership::new(Some(entry.log_id), m);
+                    RaftCommandResponse {
+                        success: true,
+                        error: None,
+                        data: None,
+                    }
                 }
             };
             responses.push(resp);
         }
-        self.persist()?;
+        let b = serde_json::to_vec(&self.state).map_err(sm_write_err)?;
+        self.db.insert("state", b).map_err(sm_write_err)?;
+        self.db.flush().map_err(sm_write_err)?;
         Ok(responses)
     }
 
@@ -474,9 +473,11 @@ impl RaftStateMachine<TypeConfig> for SledStateMachine {
     ) -> Result<(), StorageError<RaftNodeId>> {
         let data = snapshot.into_inner();
         self.state = serde_json::from_slice(&data).map_err(sm_write_err)?;
-        self.state.last_applied = meta.last_log_id.clone();
+        self.state.last_applied = meta.last_log_id;
         self.state.last_membership = meta.last_membership.clone();
-        self.persist()?;
+        let b = serde_json::to_vec(&self.state).map_err(sm_write_err)?;
+        self.db.insert("state", b).map_err(sm_write_err)?;
+        self.db.flush().map_err(sm_write_err)?;
         Ok(())
     }
 
@@ -490,7 +491,7 @@ impl RaftStateMachine<TypeConfig> for SledStateMachine {
         let snapshot_id = "latest".to_string();
         Ok(Some(Snapshot {
             meta: SnapshotMeta {
-                last_log_id: self.state.last_applied.clone(),
+                last_log_id: self.state.last_applied,
                 last_membership: self.state.last_membership.clone(),
                 snapshot_id,
             },

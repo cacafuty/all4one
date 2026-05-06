@@ -77,7 +77,10 @@ pub async fn submit_remote(
             origin_endpoint: origin_endpoint.to_string(),
         })
         .await?;
-    println!("INFO gRPC submit completed endpoint={} job_id={}", endpoint, job_id);
+    println!(
+        "INFO gRPC submit completed endpoint={} job_id={}",
+        endpoint, job_id
+    );
     Ok(())
 }
 
@@ -92,10 +95,7 @@ pub async fn report_job_status(
     let target = normalize_endpoint(endpoint);
     println!(
         "INFO gRPC status report sending endpoint={} job_id={} status={:?} source_node_id={}",
-        target,
-        job_id,
-        status,
-        source_node_id,
+        target, job_id, status, source_node_id,
     );
 
     let channel = Channel::from_shared(target)
@@ -117,9 +117,7 @@ pub async fn report_job_status(
 
     println!(
         "INFO gRPC status report completed endpoint={} job_id={} status={:?}",
-        endpoint,
-        job_id,
-        status,
+        endpoint, job_id, status,
     );
     Ok(())
 }

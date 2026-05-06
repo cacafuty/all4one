@@ -47,7 +47,8 @@ pub fn spawn_job(
 
         let sender = {
             let mut chans = output_channels.write().await;
-            chans.entry(job_id)
+            chans
+                .entry(job_id)
                 .or_insert_with(|| {
                     let (tx, _rx) = broadcast::channel(256);
                     tx
@@ -177,7 +178,12 @@ pub fn spawn_job(
     });
 }
 
-fn build_command(runtime: Runtime, source: &str, args: &[String], resources: &JobResources) -> Command {
+fn build_command(
+    runtime: Runtime,
+    source: &str,
+    args: &[String],
+    resources: &JobResources,
+) -> Command {
     match runtime {
         Runtime::Executable => {
             let mut c = Command::new(source);

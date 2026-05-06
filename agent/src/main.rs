@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+
 mod api_rest;
 mod certificates;
 mod config;
@@ -7,8 +10,8 @@ mod gossip;
 mod grpc_client;
 mod grpc_server;
 mod node;
-mod scheduler;
 mod raft;
+mod scheduler;
 mod storage;
 
 use crate::api_rest::AppState;
@@ -17,8 +20,8 @@ use crate::discovery::{mark_self_heartbeat, spawn_seed_discovery, upsert_self};
 use crate::gossip::spawn_failure_detector;
 use crate::node::{node_id, profile};
 use all4one_common::{ClusterState, NodeInfo, NodeStatus};
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, RwLock};
@@ -34,7 +37,8 @@ async fn main() {
     }
 
     if args.len() >= 2 && args[1] == "start" {
-        let config_path = parse_config_path(&args).unwrap_or_else(|| "/etc/all4one/agent.toml".to_string());
+        let config_path =
+            parse_config_path(&args).unwrap_or_else(|| "/etc/all4one/agent.toml".to_string());
         if let Err(err) = run_agent(&config_path).await {
             eprintln!("ERROR {err}");
             std::process::exit(1);
@@ -185,11 +189,7 @@ async fn enroll_with_seed_ca(
                     return Ok(());
                 }
                 Err(e) => {
-                    last_err = Some(anyhow::anyhow!(
-                        "seed={} join failed: {}",
-                        seed,
-                        e
-                    ));
+                    last_err = Some(anyhow::anyhow!("seed={} join failed: {}", seed, e));
                 }
             }
         }

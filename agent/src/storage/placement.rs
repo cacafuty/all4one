@@ -43,11 +43,7 @@ pub fn determine_placement(
 }
 
 /// Check if chunk is recoverable with current placement (for erasure coding tiers)
-pub fn is_recoverable(
-    placement: &[Uuid],
-    policy: StoragePolicy,
-    failed_nodes: &[Uuid],
-) -> bool {
+pub fn is_recoverable(placement: &[Uuid], policy: StoragePolicy, failed_nodes: &[Uuid]) -> bool {
     match policy {
         StoragePolicy::Hot => {
             // Need at least 1 replica

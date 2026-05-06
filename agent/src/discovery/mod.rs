@@ -62,7 +62,10 @@ pub async fn upsert_self(state: Arc<RwLock<ClusterState>>, local: NodeInfo) {
     st.version = st.version.saturating_add(1);
 }
 
-pub async fn mark_self_heartbeat(last_seen: Arc<RwLock<HashMap<NodeId, Instant>>>, node_id: NodeId) {
+pub async fn mark_self_heartbeat(
+    last_seen: Arc<RwLock<HashMap<NodeId, Instant>>>,
+    node_id: NodeId,
+) {
     let mut seen = last_seen.write().await;
     seen.insert(node_id, Instant::now());
 }

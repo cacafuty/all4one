@@ -7,7 +7,8 @@ use std::sync::Arc;
 use toml::Value;
 
 pub fn load(path: &str) -> Result<Arc<Config>> {
-    let raw = fs::read_to_string(path).with_context(|| format!("cannot read config file: {path}"))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("cannot read config file: {path}"))?;
 
     // Pre-validate required fields for clearer startup errors.
     let value: Value = raw
@@ -19,7 +20,8 @@ pub fn load(path: &str) -> Result<Arc<Config>> {
     ensure_required(&value, "node.data_dir")?;
     ensure_required(&value, "security.mode")?;
 
-    let parsed: Config = toml::from_str(&raw).map_err(|e| anyhow!("invalid config schema in {path}: {e}"))?;
+    let parsed: Config =
+        toml::from_str(&raw).map_err(|e| anyhow!("invalid config schema in {path}: {e}"))?;
 
     if parsed.node.tier > 2 {
         return Err(anyhow!("node.tier must be 0, 1, or 2"));

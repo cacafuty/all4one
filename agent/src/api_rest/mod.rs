@@ -1,11 +1,12 @@
 use crate::config::schema::Config;
 use crate::executor;
 use crate::grpc_client;
+use crate::raft::{ClusterStatus, RaftNode};
 use crate::scheduler::{self, SchedulingRequest};
 use all4one_common::{
-    ClusterState, JobId, JobResources, JobStatus, NodeId, NodeInfo, NodeProfile, NodeStatus, Runtime,
+    ClusterState, JobId, JobResources, JobStatus, NodeId, NodeInfo, NodeProfile, NodeStatus,
+    Runtime,
 };
-use crate::raft::{ClusterStatus, RaftNode};
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -182,7 +183,10 @@ struct ClusterInfo {
 pub async fn serve(state: AppState) -> anyhow::Result<()> {
     start_ops_watchers(state.clone());
     let app = build_router(state.clone());
-    let addr = format!("{}:{}", state.config.network.bind_address, state.config.network.rest_port);
+    let addr = format!(
+        "{}:{}",
+        state.config.network.bind_address, state.config.network.rest_port
+    );
     let listener = TcpListener::bind(&addr).await?;
     println!("INFO REST API listening on {addr}");
     axum::serve(listener, app).await?;
@@ -200,8 +204,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/cluster/status", get(cluster_status))
         .route("/v1/cluster/diagnostics", get(cluster_diagnostics))
         // Storage: external client (S3-like) interface
-        .route("/v1/storage/:bucket", get(list_bucket_objects).post(create_bucket))
-        .route("/v1/storage/:bucket/*key", get(get_object_handler).put(put_object_handler).delete(delete_object_handler))
+        .route(
+            "/v1/storage/:bucket",
+            get(list_bucket_objects).post(create_bucket),
+        )
+        .route(
+            "/v1/storage/:bucket/*key",
+            get(get_object_handler)
+                .put(put_object_handler)
+                .delete(delete_object_handler),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             shared_secret_middleware,
@@ -274,17 +286,16 @@ async fn cluster_status(State(state): State<AppState>) -> Json<ClusterStatus> {
 
 async fn cluster_diagnostics(State(state): State<AppState>) -> Json<EnhancedClusterStatus> {
     let cluster = state.cluster.read().await;
-    
-    let (raft_leader, raft_term, cluster_synchronized) =
-        if let Some(ref raft) = state.raft {
-            let m = raft.current_metrics();
-            let leader: Option<String> = m.current_leader.map(|id| id.to_string());
-            let term = m.current_term;
-            let synchronized = leader.is_some();
-            (leader, Some(term), synchronized)
-        } else {
-            (None, None, false)
-        };
+
+    let (raft_leader, raft_term, cluster_synchronized) = if let Some(ref raft) = state.raft {
+        let m = raft.current_metrics();
+        let leader: Option<String> = m.current_leader.map(|id| id.to_string());
+        let term = m.current_term;
+        let synchronized = leader.is_some();
+        (leader, Some(term), synchronized)
+    } else {
+        (None, None, false)
+    };
 
     let online = cluster
         .nodes
@@ -329,10 +340,10 @@ async fn cluster_diagnostics(State(state): State<AppState>) -> Json<EnhancedClus
 
 async fn check_storage_health(data_dir: &str) -> StorageHealth {
     use std::path::Path;
-    
+
     let path = Path::new(data_dir);
     let accessible = path.exists() && path.is_dir();
-    
+
     let available_space = if accessible {
         // Try to get disk space info
         match std::fs::metadata(data_dir) {
@@ -391,16 +402,26 @@ async fn create_bucket(
     if !state.config.roles.storage {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StorageErrorResponse { error: "This node does not have the storage role".to_string() }),
-        ).into_response();
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
     }
     let data_dir = &state.config.node.data_dir;
     match crate::storage::index::create_bucket(std::path::Path::new(data_dir), &bucket).await {
-        Ok(_) => (StatusCode::CREATED, Json(serde_json::json!({ "bucket": bucket, "created": true }))).into_response(),
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "bucket": bucket, "created": true })),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(StorageErrorResponse { error: e.to_string() }),
-        ).into_response(),
+            Json(StorageErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -413,16 +434,27 @@ async fn list_bucket_objects(
     if !state.config.roles.storage {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StorageErrorResponse { error: "This node does not have the storage role".to_string() }),
-        ).into_response();
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
     }
     let data_dir = &state.config.node.data_dir;
-    match crate::storage::list_objects(data_dir, &bucket, params.prefix.as_deref(), params.max_keys).await {
-        Ok(objects) => Json(serde_json::json!({ "bucket": bucket, "objects": objects, "count": objects.len() })).into_response(),
+    match crate::storage::list_objects(data_dir, &bucket, params.prefix.as_deref(), params.max_keys)
+        .await
+    {
+        Ok(objects) => Json(
+            serde_json::json!({ "bucket": bucket, "objects": objects, "count": objects.len() }),
+        )
+        .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(StorageErrorResponse { error: e.to_string() }),
-        ).into_response(),
+            Json(StorageErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -437,8 +469,11 @@ async fn put_object_handler(
     if !state.config.roles.storage {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StorageErrorResponse { error: "This node does not have the storage role".to_string() }),
-        ).into_response();
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
     }
 
     let policy_str = headers
@@ -446,10 +481,10 @@ async fn put_object_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("warm");
     let policy = match policy_str {
-        "hot"     => crate::storage::StoragePolicy::Hot,
-        "cold"    => crate::storage::StoragePolicy::Cold,
+        "hot" => crate::storage::StoragePolicy::Hot,
+        "cold" => crate::storage::StoragePolicy::Cold,
         "archive" => crate::storage::StoragePolicy::Archive,
-        _         => crate::storage::StoragePolicy::Warm,
+        _ => crate::storage::StoragePolicy::Warm,
     };
 
     let data_dir = &state.config.node.data_dir;
@@ -462,8 +497,11 @@ async fn put_object_handler(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(StorageErrorResponse { error: e.to_string() }),
-            ).into_response();
+                Json(StorageErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response();
         }
     };
 
@@ -492,7 +530,8 @@ async fn put_object_handler(
             let size = meta_clone.size_bytes;
 
             tokio::spawn(async move {
-                match crate::storage::read_shards(&data_dir_clone, &bucket_clone, &key_clone).await {
+                match crate::storage::read_shards(&data_dir_clone, &bucket_clone, &key_clone).await
+                {
                     Ok(shards) => {
                         for peer in &peers {
                             for (idx, hash, data) in &shards {
@@ -506,7 +545,9 @@ async fn put_object_handler(
                                     &policy_str,
                                     size,
                                     &etag,
-                                ).await {
+                                )
+                                .await
+                                {
                                     println!(
                                         "WARN shard transfer failed peer={} shard={} err={}",
                                         peer, idx, e
@@ -534,18 +575,21 @@ async fn get_object_handler(
     if !state.config.roles.storage {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StorageErrorResponse { error: "This node does not have the storage role".to_string() }),
-        ).into_response();
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
     }
 
     let data_dir = &state.config.node.data_dir;
     match crate::storage::get_object(data_dir, &bucket, &key).await {
         Ok(data) => {
-            let etag = crate::storage::index::get_object(
-                std::path::Path::new(data_dir), &bucket, &key
-            ).await
-                .map(|m| m.etag)
-                .unwrap_or_default();
+            let etag =
+                crate::storage::index::get_object(std::path::Path::new(data_dir), &bucket, &key)
+                    .await
+                    .map(|m| m.etag)
+                    .unwrap_or_default();
 
             axum::http::Response::builder()
                 .status(StatusCode::OK)
@@ -558,12 +602,17 @@ async fn get_object_handler(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") || msg.contains("Object not found") {
-                (StatusCode::NOT_FOUND, Json(StorageErrorResponse { error: msg })).into_response()
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(StorageErrorResponse { error: msg }),
+                )
+                    .into_response()
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(StorageErrorResponse { error: msg }),
-                ).into_response()
+                )
+                    .into_response()
             }
         }
     }
@@ -577,8 +626,11 @@ async fn delete_object_handler(
     if !state.config.roles.storage {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(StorageErrorResponse { error: "This node does not have the storage role".to_string() }),
-        ).into_response();
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
     }
 
     let data_dir = &state.config.node.data_dir;
@@ -587,12 +639,17 @@ async fn delete_object_handler(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") || msg.contains("Object not found") {
-                (StatusCode::NOT_FOUND, Json(StorageErrorResponse { error: msg })).into_response()
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(StorageErrorResponse { error: msg }),
+                )
+                    .into_response()
             } else {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(StorageErrorResponse { error: msg }),
-                ).into_response()
+                )
+                    .into_response()
             }
         }
     }
@@ -651,7 +708,11 @@ pub fn start_ops_watchers(state: AppState) {
                         publish_ops_event(
                             &state,
                             "node.status_changed",
-                            if *status == NodeStatus::Online { "info" } else { "warn" },
+                            if *status == NodeStatus::Online {
+                                "info"
+                            } else {
+                                "warn"
+                            },
                             format!("Node {} changed status {:?} -> {:?}", node_id, prev, status),
                             Some(*node_id),
                             None,
@@ -697,8 +758,14 @@ async fn get_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
     let st = state.cluster.read().await;
     let mut nodes: Vec<NodeInfo> = st.nodes.values().cloned().collect();
     nodes.sort_by_key(|n| n.profile.id.to_string());
-    let online = nodes.iter().filter(|n| n.status == NodeStatus::Online).count();
-    let offline = nodes.iter().filter(|n| n.status == NodeStatus::Offline).count();
+    let online = nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Online)
+        .count();
+    let offline = nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Offline)
+        .count();
 
     Json(NodesResponse {
         total: nodes.len(),
@@ -733,18 +800,19 @@ async fn get_node(State(state): State<AppState>, Path(id): Path<String>) -> impl
 }
 
 async fn post_job(State(state): State<AppState>, body: String) -> impl IntoResponse {
-    let request: SubmitJobRequest = match serde_yaml::from_str(&body).or_else(|_| serde_json::from_str(&body)) {
-        Ok(v) => v,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!("invalid job payload: {err}")
-                })),
-            )
-                .into_response()
-        }
-    };
+    let request: SubmitJobRequest =
+        match serde_yaml::from_str(&body).or_else(|_| serde_json::from_str(&body)) {
+            Ok(v) => v,
+            Err(err) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": format!("invalid job payload: {err}")
+                    })),
+                )
+                    .into_response()
+            }
+        };
 
     let response = match enqueue_job(state, request).await {
         Ok(resp) => resp,
@@ -757,14 +825,13 @@ async fn post_job(State(state): State<AppState>, body: String) -> impl IntoRespo
         }
     };
 
-    (
-        StatusCode::ACCEPTED,
-        Json(response),
-    )
-        .into_response()
+    (StatusCode::ACCEPTED, Json(response)).into_response()
 }
 
-pub async fn enqueue_job(state: AppState, request: SubmitJobRequest) -> Result<SubmitJobResponse, String> {
+pub async fn enqueue_job(
+    state: AppState,
+    request: SubmitJobRequest,
+) -> Result<SubmitJobResponse, String> {
     if request.resources.cpu_cores == 0 || request.resources.memory_mb == 0 {
         return Err("resources.cpu_cores and resources.memory_mb must be > 0".to_string());
     }
@@ -807,13 +874,7 @@ pub async fn enqueue_job(state: AppState, request: SubmitJobRequest) -> Result<S
     );
 
     if let Some(node_id) = assigned {
-        let _ = dispatch_to_assigned(
-            state.clone(),
-            node_id,
-            job_id,
-            request.clone(),
-        )
-        .await;
+        let _ = dispatch_to_assigned(state.clone(), node_id, job_id, request.clone()).await;
     } else {
         spawn_retry_dispatch(state.clone(), job_id, request.clone(), scheduling);
     }
@@ -911,7 +972,11 @@ pub async fn apply_terminal_job_update(
         job.exit_code,
     );
 
-    let level = if status == JobStatus::Failed { "error" } else { "info" };
+    let level = if status == JobStatus::Failed {
+        "error"
+    } else {
+        "info"
+    };
     publish_ops_event(
         &state,
         "job.terminal",
@@ -933,9 +998,7 @@ async fn dispatch_to_assigned(
     if assigned == state.node_id {
         println!(
             "INFO Job dispatch local id={} runtime={:?} node_id={}",
-            job_id,
-            request.runtime,
-            state.node_id,
+            job_id, request.runtime, state.node_id,
         );
         executor::spawn_job(
             job_id,
@@ -966,10 +1029,7 @@ async fn dispatch_to_assigned(
     if let Some(endpoint) = target {
         println!(
             "INFO Job dispatch remote id={} runtime={:?} target_node={} endpoint={}",
-            job_id,
-            request.runtime,
-            assigned,
-            endpoint,
+            job_id, request.runtime, assigned, endpoint,
         );
 
         if grpc_client::submit_remote(&endpoint, job_id, &state.local_node.grpc_endpoint, &request)
@@ -986,8 +1046,7 @@ async fn dispatch_to_assigned(
             }
             println!(
                 "INFO Job dispatch remote accepted id={} target_node={}",
-                job_id,
-                assigned,
+                job_id, assigned,
             );
             publish_ops_event(
                 &state,
@@ -1002,9 +1061,7 @@ async fn dispatch_to_assigned(
 
         println!(
             "WARN Job dispatch remote failed id={} target_node={} endpoint={}",
-            job_id,
-            assigned,
-            endpoint,
+            job_id, assigned, endpoint,
         );
         publish_ops_event(
             &state,
@@ -1040,18 +1097,19 @@ fn spawn_retry_dispatch(
             }
 
             let cluster_snapshot = state.cluster.read().await.clone();
-            let Some(next_node) = scheduler::pick_node(&state.local_node, &cluster_snapshot, &scheduling) else {
+            let Some(next_node) =
+                scheduler::pick_node(&state.local_node, &cluster_snapshot, &scheduling)
+            else {
                 continue;
             };
 
             println!(
                 "INFO Job retry dispatch id={} next_node={} runtime={:?}",
-                job_id,
-                next_node,
-                request.runtime,
+                job_id, next_node, request.runtime,
             );
 
-            let dispatched = dispatch_to_assigned(state.clone(), next_node, job_id, request.clone()).await;
+            let dispatched =
+                dispatch_to_assigned(state.clone(), next_node, job_id, request.clone()).await;
             if dispatched {
                 return;
             }
@@ -1134,7 +1192,10 @@ async fn delete_job(State(state): State<AppState>, Path(id): Path<String>) -> im
             .into_response();
     };
 
-    if matches!(existing.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+    if matches!(
+        existing.status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+    ) {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error": "job already finished"})),
@@ -1157,18 +1218,11 @@ async fn delete_job(State(state): State<AppState>, Path(id): Path<String>) -> im
     (StatusCode::OK, Json(updated)).into_response()
 }
 
-async fn stream_output(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn stream_output(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let parsed = match Uuid::parse_str(&id) {
         Ok(v) => JobId(v),
         Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "invalid job id",
-            )
-                .into_response();
+            return (StatusCode::BAD_REQUEST, "invalid job id").into_response();
         }
     };
 

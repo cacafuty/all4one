@@ -7,10 +7,7 @@ fn main() {
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
-        .compile_protos(
-            &["proto/agent.proto", "proto/raft.proto"],
-            &["proto"],
-        )
+        .compile_protos(&["proto/agent.proto", "proto/raft.proto"], &["proto"])
         .expect("compile protos");
 
     println!("cargo:rerun-if-changed=proto/agent.proto");

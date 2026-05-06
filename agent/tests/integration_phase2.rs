@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
-    use all4one_agent::storage::{self, StoragePolicy, ObjectMetadata};
+    use all4one_agent::storage::{self, StoragePolicy};
     use tempfile::TempDir;
 
     /// Test Phase 2 Acceptance Criterion #1: Data persistence
@@ -67,12 +67,21 @@ mod integration_tests {
         let parity_4 = chunks_dir.join(format!("{}-shard-4", object_id));
         let parity_5 = chunks_dir.join(format!("{}-shard-5", object_id));
         let mut deleted = 0;
-        if parity_4.exists() { std::fs::remove_file(&parity_4)?; deleted += 1; }
-        if parity_5.exists() { std::fs::remove_file(&parity_5)?; deleted += 1; }
+        if parity_4.exists() {
+            std::fs::remove_file(&parity_4)?;
+            deleted += 1;
+        }
+        if parity_5.exists() {
+            std::fs::remove_file(&parity_5)?;
+            deleted += 1;
+        }
 
         if deleted == 2 {
             let retrieved = storage::get_object(temp_dir.path(), bucket, key).await?;
-            assert_eq!(retrieved, test_data, "Should recover with 4/6 shards when only parity shards are missing");
+            assert_eq!(
+                retrieved, test_data,
+                "Should recover with 4/6 shards when only parity shards are missing"
+            );
             println!("✓ Criterion 3: Erasure coding recovery works (4/6 shards sufficient)");
         }
 
@@ -92,13 +101,25 @@ mod integration_tests {
 
         // Store job1
         let job_data_1 = b"job_status:running";
-        storage::put_object(temp_dir.path(), bucket, job_id, job_data_1, StoragePolicy::Hot)
-            .await?;
+        storage::put_object(
+            temp_dir.path(),
+            bucket,
+            job_id,
+            job_data_1,
+            StoragePolicy::Hot,
+        )
+        .await?;
 
         // Try to store same job (should update, not duplicate)
         let job_data_2 = b"job_status:running";
-        storage::put_object(temp_dir.path(), bucket, job_id, job_data_2, StoragePolicy::Hot)
-            .await?;
+        storage::put_object(
+            temp_dir.path(),
+            bucket,
+            job_id,
+            job_data_2,
+            StoragePolicy::Hot,
+        )
+        .await?;
 
         // Retrieve and verify
         let stored = storage::get_object(temp_dir.path(), bucket, job_id).await?;
@@ -125,8 +146,7 @@ mod integration_tests {
         for i in 0..10 {
             let key = format!("object{}", i);
             let data = vec![0u8; 100 * 1024]; // 100KB each
-            storage::put_object(temp_dir.path(), "bucket", &key, &data, StoragePolicy::Hot)
-                .await?;
+            storage::put_object(temp_dir.path(), "bucket", &key, &data, StoragePolicy::Hot).await?;
         }
 
         // List with pagination (should not load all in memory)
@@ -150,14 +170,38 @@ mod integration_tests {
         // Store same data in different tiers
         let data = b"test object";
 
-        storage::put_object(temp_dir.path(), "bucket", "hot-copy", data, StoragePolicy::Hot)
-            .await?;
-        storage::put_object(temp_dir.path(), "bucket", "warm-copy", data, StoragePolicy::Warm)
-            .await?;
-        storage::put_object(temp_dir.path(), "bucket", "cold-copy", data, StoragePolicy::Cold)
-            .await?;
-        storage::put_object(temp_dir.path(), "bucket", "archive-copy", data, StoragePolicy::Archive)
-            .await?;
+        storage::put_object(
+            temp_dir.path(),
+            "bucket",
+            "hot-copy",
+            data,
+            StoragePolicy::Hot,
+        )
+        .await?;
+        storage::put_object(
+            temp_dir.path(),
+            "bucket",
+            "warm-copy",
+            data,
+            StoragePolicy::Warm,
+        )
+        .await?;
+        storage::put_object(
+            temp_dir.path(),
+            "bucket",
+            "cold-copy",
+            data,
+            StoragePolicy::Cold,
+        )
+        .await?;
+        storage::put_object(
+            temp_dir.path(),
+            "bucket",
+            "archive-copy",
+            data,
+            StoragePolicy::Archive,
+        )
+        .await?;
 
         // All should be retrievable
         let hot = storage::get_object(temp_dir.path(), "bucket", "hot-copy").await?;
@@ -270,7 +314,10 @@ mod integration_tests {
         )
         .await?;
 
-        assert_ne!(meta1.etag, meta2.etag, "Different data should have different etags");
+        assert_ne!(
+            meta1.etag, meta2.etag,
+            "Different data should have different etags"
+        );
         assert_eq!(meta1.etag, meta3.etag, "Same data should have same etag");
 
         println!("✓ Etag correctness: Hashing and uniqueness verified");

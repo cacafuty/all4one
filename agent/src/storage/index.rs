@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use serde_json;
 use sled::{Db, Tree};
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::{ObjectMetadata, StoragePolicy};
@@ -33,9 +33,8 @@ fn get_db(data_dir: &Path) -> Result<Arc<Db>> {
         }
     }
 
-    let opened = Arc::new(
-        sled::open(&db_path).map_err(|e| anyhow!("Failed to open index DB: {}", e))?,
-    );
+    let opened =
+        Arc::new(sled::open(&db_path).map_err(|e| anyhow!("Failed to open index DB: {}", e))?);
 
     let mut cache = db_cache()
         .lock()
@@ -75,16 +74,12 @@ pub async fn put_object(
 
     let json = serde_json::to_string(&metadata)?;
     tree.insert(key.as_bytes(), json.as_bytes())?;
-    
+
     Ok(())
 }
 
 /// Get object metadata
-pub async fn get_object(
-    data_dir: &Path,
-    bucket: &str,
-    key: &str,
-) -> Result<ObjectMetadata> {
+pub async fn get_object(data_dir: &Path, bucket: &str, key: &str) -> Result<ObjectMetadata> {
     let db = get_db(data_dir)?;
     let tree = get_bucket_tree(&db, bucket)?;
 
@@ -175,7 +170,7 @@ mod tests {
     async fn test_init_index() -> Result<()> {
         let temp_dir = TempDir::new()?;
         init_index(temp_dir.path()).await?;
-        
+
         let db_path = temp_dir.path().join("objects.db");
         assert!(db_path.exists());
         Ok(())

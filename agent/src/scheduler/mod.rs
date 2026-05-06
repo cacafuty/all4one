@@ -1,4 +1,4 @@
-use all4one_common::{ClusterState, NodeId, NodeInfo, Runtime, NodeStatus};
+use all4one_common::{ClusterState, NodeId, NodeInfo, NodeStatus, Runtime};
 
 #[derive(Debug, Clone)]
 pub struct SchedulingRequest {
@@ -7,7 +7,11 @@ pub struct SchedulingRequest {
     pub require_docker: bool,
 }
 
-pub fn pick_node(local: &NodeInfo, cluster: &ClusterState, req: &SchedulingRequest) -> Option<NodeId> {
+pub fn pick_node(
+    local: &NodeInfo,
+    cluster: &ClusterState,
+    req: &SchedulingRequest,
+) -> Option<NodeId> {
     let mut candidates: Vec<&NodeInfo> = cluster
         .nodes
         .values()

@@ -7,14 +7,16 @@ pub mod placement;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::Path;
 
 /// Policy for object storage tiering
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum StoragePolicy {
     /// Hot: 3x replication, no compression
     Hot,
     /// Warm: RS(4,2) erasure, zstd level 3
+    #[default]
     Warm,
     /// Cold: RS(6,3) erasure, zstd level 19
     Cold,
@@ -22,9 +24,14 @@ pub enum StoragePolicy {
     Archive,
 }
 
-impl Default for StoragePolicy {
-    fn default() -> Self {
-        StoragePolicy::Warm
+impl fmt::Display for StoragePolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            StoragePolicy::Hot => "hot",
+            StoragePolicy::Warm => "warm",
+            StoragePolicy::Cold => "cold",
+            StoragePolicy::Archive => "archive",
+        })
     }
 }
 
@@ -39,15 +46,15 @@ impl StoragePolicy {
     pub fn erasure_coding(&self) -> Option<(usize, usize)> {
         match self {
             StoragePolicy::Hot => None,
-            StoragePolicy::Warm => Some((4, 2)),   // 4 data, 2 parity
-            StoragePolicy::Cold => Some((6, 3)),   // 6 data, 3 parity
+            StoragePolicy::Warm => Some((4, 2)), // 4 data, 2 parity
+            StoragePolicy::Cold => Some((6, 3)), // 6 data, 3 parity
             StoragePolicy::Archive => Some((8, 4)), // 8 data, 4 parity
         }
     }
 
     pub fn zstd_level(&self) -> i32 {
         match self {
-            StoragePolicy::Hot => 0,    // No compression
+            StoragePolicy::Hot => 0, // No compression
             StoragePolicy::Warm => 3,
             StoragePolicy::Cold => 19,
             StoragePolicy::Archive => 22,
@@ -87,21 +94,13 @@ pub async fn put_object(
 }
 
 /// Retrieve object chunks
-pub async fn get_object(
-    data_dir: impl AsRef<Path>,
-    bucket: &str,
-    key: &str,
-) -> Result<Vec<u8>> {
+pub async fn get_object(data_dir: impl AsRef<Path>, bucket: &str, key: &str) -> Result<Vec<u8>> {
     let data_dir = data_dir.as_ref();
     chunks::get_chunks(data_dir, bucket, key).await
 }
 
 /// Delete object
-pub async fn delete_object(
-    data_dir: impl AsRef<Path>,
-    bucket: &str,
-    key: &str,
-) -> Result<()> {
+pub async fn delete_object(data_dir: impl AsRef<Path>, bucket: &str, key: &str) -> Result<()> {
     let data_dir = data_dir.as_ref();
     index::delete_object(data_dir, bucket, key).await
 }
@@ -128,11 +127,11 @@ pub async fn read_shards(
     let meta = index::get_object(data_dir, bucket, key).await?;
 
     let total_shards: u32 = match meta.policy.as_str() {
-        "hot"     => 1,
-        "warm"    => 6,  // 4 data + 2 parity
-        "cold"    => 9,  // 6 data + 3 parity
+        "hot" => 1,
+        "warm" => 6,     // 4 data + 2 parity
+        "cold" => 9,     // 6 data + 3 parity
         "archive" => 12, // 8 data + 4 parity
-        _         => 1,
+        _ => 1,
     };
 
     let safe_key = key.replace('/', "-");

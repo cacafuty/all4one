@@ -42,10 +42,7 @@ pub struct RaftNode {
 impl RaftNode {
     /// Submit a command to the Raft cluster.
     /// Returns an error if this node is not the leader.
-    pub async fn apply_command(
-        &self,
-        cmd: RaftCommand,
-    ) -> anyhow::Result<RaftCommandResponse> {
+    pub async fn apply_command(&self, cmd: RaftCommand) -> anyhow::Result<RaftCommandResponse> {
         self.raft
             .client_write(cmd)
             .await
@@ -102,19 +99,21 @@ pub async fn init_raft(
     let log_store = SledLogStore::open(path)?;
     let state_machine = SledStateMachine::open(path)?;
 
-    let raft = Raft::new(node_id, config, GrpcNetworkFactory, log_store, state_machine)
-        .await
-        .map_err(|e| anyhow::anyhow!("raft new: {}", e))?;
+    let raft = Raft::new(
+        node_id,
+        config,
+        GrpcNetworkFactory,
+        log_store,
+        state_machine,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("raft new: {}", e))?;
 
     // Bootstrap the cluster if this is a fresh node (no vote stored yet).
     // For a single-node cluster we initialise immediately.
     // For multi-node clusters the caller is responsible for calling
     // `raft.initialize(members)` with the full quorum.
-    let log_index = raft
-        .metrics()
-        .borrow()
-        .last_log_index
-        .clone();
+    let log_index = raft.metrics().borrow().last_log_index;
 
     if log_index.is_none() {
         let mut members: BTreeMap<RaftNodeId, BasicNode> = BTreeMap::new();
@@ -125,7 +124,12 @@ pub async fn init_raft(
             },
         );
         for (peer_id, endpoint) in &initial_peers {
-            members.insert(*peer_id, BasicNode { addr: endpoint.clone() });
+            members.insert(
+                *peer_id,
+                BasicNode {
+                    addr: endpoint.clone(),
+                },
+            );
         }
         match raft.initialize(members).await {
             Ok(_) => {}
@@ -157,7 +161,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&status).expect("serialize cluster status");
-        let decoded: ClusterStatus = serde_json::from_str(&json).expect("deserialize cluster status");
+        let decoded: ClusterStatus =
+            serde_json::from_str(&json).expect("deserialize cluster status");
 
         assert_eq!(decoded.node_id, status.node_id);
         assert_eq!(decoded.raft_term, 7);
@@ -168,7 +173,13 @@ mod tests {
     async fn init_raft_single_node_smoke_test() -> anyhow::Result<()> {
         let tmp = TempDir::new()?;
         let node_id = all4one_common::NodeId(Uuid::new_v4());
-        let raft = init_raft(node_id, tmp.path().to_str().unwrap(), "127.0.0.1:7947", vec![]).await?;
+        let raft = init_raft(
+            node_id,
+            tmp.path().to_str().unwrap(),
+            "127.0.0.1:7947",
+            vec![],
+        )
+        .await?;
 
         let metrics = raft.current_metrics();
         assert_eq!(metrics.id, node_id);
