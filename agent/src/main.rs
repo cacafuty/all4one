@@ -32,7 +32,7 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() >= 2 && args[1] == "--version" {
-        println!("all4one-agent 0.1.0");
+        println!("all4one-agent {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 
@@ -62,7 +62,7 @@ fn parse_config_path(args: &[String]) -> Option<String> {
 }
 
 async fn run_agent(config_path: &str) -> anyhow::Result<()> {
-    println!("INFO Starting All4One agent v0.1.0");
+    println!("INFO Starting All4One agent v{}", env!("CARGO_PKG_VERSION"));
     println!("INFO Config path: {}", config_path);
 
     let config = load(config_path)?;
