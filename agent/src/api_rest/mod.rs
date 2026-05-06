@@ -756,24 +756,35 @@ async fn get_internal_node(State(state): State<AppState>) -> Json<NodeInfo> {
     Json(state.local_node.clone())
 }
 
-async fn get_internal_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
+/// Minimal peer info returned by the unauthenticated /v1/internal/nodes endpoint.
+/// Only exposes what a joining node needs for discovery — no capabilities or resources.
+#[derive(Debug, Serialize)]
+struct PeerInfo {
+    id: String,
+    grpc_endpoint: String,
+    rest_endpoint: String,
+    status: NodeStatus,
+}
+
+#[derive(Debug, Serialize)]
+struct PeerListResponse {
+    peers: Vec<PeerInfo>,
+}
+
+async fn get_internal_nodes(State(state): State<AppState>) -> Json<PeerListResponse> {
     let st = state.cluster.read().await;
-    let mut nodes: Vec<NodeInfo> = st.nodes.values().cloned().collect();
-    nodes.sort_by_key(|n| n.profile.id.to_string());
-    let online = nodes
-        .iter()
-        .filter(|n| n.status == NodeStatus::Online)
-        .count();
-    let offline = nodes
-        .iter()
-        .filter(|n| n.status == NodeStatus::Offline)
-        .count();
-    Json(NodesResponse {
-        total: nodes.len(),
-        online,
-        offline,
-        nodes,
-    })
+    let mut peers: Vec<PeerInfo> = st
+        .nodes
+        .values()
+        .map(|n| PeerInfo {
+            id: n.profile.id.to_string(),
+            grpc_endpoint: n.grpc_endpoint.clone(),
+            rest_endpoint: n.rest_endpoint.clone(),
+            status: n.status.clone(),
+        })
+        .collect();
+    peers.sort_by_key(|p| p.id.clone());
+    Json(PeerListResponse { peers })
 }
 
 async fn get_nodes(State(state): State<AppState>) -> Json<NodesResponse> {

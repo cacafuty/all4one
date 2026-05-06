@@ -1,5 +1,5 @@
 [node]
-tier = 2
+tier = 0
 availability = "always"
 quorum_participant = false
 data_dir = "C:/ProgramData/all4one-local"
@@ -16,12 +16,11 @@ rest_port = 7946
 
 [discovery]
 mdns = false
-# Point to the Steam Deck. Use the Steam Deck's LAN IP.
-seeds = ["192.168.1.131:7947"]
+# Bootstrap CA issuer - no seeds needed
+seeds = []
 
 [security]
 mode = "dev"
-shared_secret = "compose-secret"
 
 [executor]
 max_concurrent_jobs = 2

@@ -5,11 +5,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
+use uuid::Uuid;
 
-/// Response shape for GET /v1/nodes (we only need the node list).
+/// Minimal peer info returned by GET /v1/internal/nodes (unauthenticated).
 #[derive(Deserialize)]
-struct NodesResponse {
-    nodes: Vec<NodeInfo>,
+struct PeerInfo {
+    id: String,
+    grpc_endpoint: String,
+    rest_endpoint: String,
+}
+
+#[derive(Deserialize)]
+struct PeerListResponse {
+    peers: Vec<PeerInfo>,
 }
 
 pub fn spawn_seed_discovery(
@@ -47,21 +55,55 @@ pub fn spawn_seed_discovery(
                     }
                 };
 
-                let Ok(body) = response.json::<NodesResponse>().await else {
+                let Ok(body) = response.json::<PeerListResponse>().await else {
                     continue;
                 };
 
                 let now = Instant::now();
                 let mut state = cluster.write().await;
                 let mut seen = last_seen.write().await;
-                for node in body.nodes {
-                    if node.profile.id == self_id {
+                for peer in body.peers {
+                    let Ok(uuid) = Uuid::parse_str(&peer.id) else {
+                        continue;
+                    };
+                    let id = NodeId(uuid);
+                    if id == self_id {
                         continue;
                     }
-                    let id = node.profile.id;
-                    let mut peer = node;
-                    peer.status = NodeStatus::Online;
-                    state.nodes.insert(id, peer);
+                    // Only update endpoint info; preserve existing profile/capabilities if known.
+                    state
+                        .nodes
+                        .entry(id)
+                        .and_modify(|n| {
+                            n.grpc_endpoint = peer.grpc_endpoint.clone();
+                            n.rest_endpoint = peer.rest_endpoint.clone();
+                            n.status = NodeStatus::Online;
+                        })
+                        .or_insert_with(|| NodeInfo {
+                            profile: all4one_common::NodeProfile {
+                                id,
+                                tier: 0,
+                                availability: String::new(),
+                                quorum_participant: false,
+                                resources: all4one_common::NodeResources {
+                                    cpu_cores: 0,
+                                    memory_mb: 0,
+                                    disk_mb: None,
+                                },
+                                capabilities: all4one_common::NodeCapabilities {
+                                    docker: false,
+                                    python: None,
+                                    java: None,
+                                    wasm: false,
+                                    gpu_enabled: false,
+                                    storage_node: false,
+                                },
+                            },
+                            status: NodeStatus::Online,
+                            version: String::new(),
+                            grpc_endpoint: peer.grpc_endpoint,
+                            rest_endpoint: peer.rest_endpoint,
+                        });
                     seen.insert(id, now);
                 }
                 state.version = state.version.saturating_add(1);

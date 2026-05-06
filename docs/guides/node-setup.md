@@ -201,6 +201,181 @@ Before you start on Steam Deck:
 - Port `7947` on `<HOST_IP>` is reachable from the Steam Deck (agent-a seed).
 - You already replaced `<HOST_IP>` in your `steamdeck.toml` seeds.
 
+## Certificate-based enrollment (CA-only, no shared_secret)
+
+This test validates mTLS cluster enrollment using only CA certificates, without relying on shared secrets. Useful for production-like setups where shared_secret should be disabled.
+
+### Setup
+
+**Prerequisites:**
+- v0.1.8 or later binary
+- Host (Windows or Linux) with LAN IP `<HOST_IP>`
+- Steam Deck with LAN IP `<STEAM_DECK_IP>` on the same subnet
+- Both nodes able to reach each other on ports 7946 and 7947
+
+**Topology:**
+
+| Node | Role | Config | Purpose |
+|---|---|---|---|
+| Host | Tier 0, CA issuer | `agent-win-local.toml` | Generates CA key and issues peer certificates |
+| Steam Deck | Tier 1, executor | `agent-steam-deck.toml` | Enrolls via CA, joins cluster |
+
+### 1. Start the host agent as CA issuer
+
+Update `agent-win-local.toml` on the host:
+
+```toml
+[node]
+tier = 0
+data_dir = "C:/ProgramData/all4one-local"  # Windows
+
+[discovery]
+seeds = []  # Empty: tier=0 acts as bootstrap issuer
+
+[security]
+mode = "dev"
+# No shared_secret: CA-only enrollment
+```
+
+Start on Windows:
+```powershell
+$env:ALL4ONE_ADVERTISE_HOST = "<HOST_IP>"
+$env:ALL4ONE_ADVERTISE_GRPC_PORT = "7947"
+$env:ALL4ONE_ADVERTISE_REST_PORT = "7946"
+.\all4one-agent.exe start --config .\deploy\compose\configs\agent-win-local.toml
+```
+
+Expected output:
+```
+INFO CA initialized at "C:/ProgramData/all4one-local\certs", ca.key perms: 0600
+INFO Certificate issuer ready (cluster bootstrap node)
+INFO REST API listening on 0.0.0.0:7946
+```
+
+The host creates `ca.key` and `ca.crt` in the data_dir for signing peer certificates during enrollment.
+
+### 2. Download v0.1.8 on Steam Deck
+
+```bash
+VERSION="0.1.8"
+mkdir -p "$HOME/bin"
+curl -L "https://github.com/cacafuty/all4one/releases/download/v${VERSION}/all4one-agent-linux-x86_64.tar.gz" \
+     -o /tmp/all4one-agent.tar.gz
+tar -xzf /tmp/all4one-agent.tar.gz -C "$HOME/bin"
+chmod +x "$HOME/bin/all4one-agent"
+export PATH="$HOME/bin:$PATH"
+```
+
+### 3. Configure Steam Deck for CA enrollment
+
+Create `agent-steam-deck.toml`:
+
+```toml
+[node]
+tier = 1
+data_dir = "/home/deck/.local/share/all4one"
+
+[roles]
+scheduler = true
+executor = true
+storage = true
+
+[network]
+bind_address = "0.0.0.0"
+grpc_port = 7947
+rest_port = 7946
+
+[discovery]
+mdns = false
+# Seeds point to host CA issuer
+seeds = ["<HOST_IP>:7947"]
+
+[security]
+mode = "dev"
+# CA-only: no shared_secret
+```
+
+Save this as `~/.config/all4one/agent-steam-deck.toml` on Steam Deck.
+
+### 4. Start the Steam Deck agent
+
+```bash
+export ALL4ONE_ADVERTISE_HOST="<STEAM_DECK_IP>"
+export PATH="$HOME/bin:$PATH"
+all4one-agent start --config ~/.config/all4one/agent-steam-deck.toml
+```
+
+Expected enrollment flow:
+
+1. Steam Deck agent starts (no existing credentials).
+2. Queries seed `<HOST_IP>:7947` to discover the CA issuer.
+3. Calls gRPC `Join` RPC on the host → passes Steam Deck node ID + public key.
+4. Host agent signs the public key using its CA key → returns signed certificate + CA certificate.
+5. Steam Deck stores `/home/deck/.local/share/all4one/certs/node.crt` and `node.key`.
+6. Subsequent gRPC calls use mTLS (mutually authenticated).
+7. Steam Deck discovers other peers via `/v1/internal/nodes` (minimal peer list, no sensitive data leakage).
+
+Expected output on Steam Deck:
+```
+INFO Starting All4One agent v0.1.8
+INFO Node ID: <STEAM_DECK_NODE_ID>
+INFO Tier: 1 | Roles: scheduler=true executor=true storage=true
+INFO Enrollment successful via seed=<HOST_IP>:7947 cert_expiry_unix=<TIMESTAMP>
+INFO REST API listening on 0.0.0.0:7946
+```
+
+### 5. Verify cluster formation
+
+From Steam Deck:
+```bash
+curl -s http://127.0.0.1:7946/health | python3 -m json.tool
+
+# Check peer list (no shared_secret required for /v1/internal/nodes)
+curl -s http://<HOST_IP>:7946/v1/internal/nodes | python3 -m json.tool
+```
+
+Expected output for `/v1/internal/nodes`:
+```json
+{
+  "peers": [
+    {
+      "id": "<HOST_NODE_ID>",
+      "grpc_endpoint": "<HOST_IP>:7947",
+      "rest_endpoint": "<HOST_IP>:7946",
+      "status": "alive"
+    },
+    {
+      "id": "<STEAM_DECK_NODE_ID>",
+      "grpc_endpoint": "<STEAM_DECK_IP>:7947",
+      "rest_endpoint": "<STEAM_DECK_IP>:7946",
+      "status": "alive"
+    }
+  ]
+}
+```
+
+Note: This endpoint exposes minimal data (ID, gRPC/REST endpoints, status) **without** sensitive fields like capabilities, Docker sockets, or GPU info. Full node details remain in the authenticated `/v1/nodes` endpoint.
+
+### 6. Verify mTLS connectivity
+
+The Steam Deck and host agent now use mTLS for all gRPC communication. To inspect certificate chain:
+
+From Steam Deck:
+```bash
+openssl x509 -in ~/.local/share/all4one/certs/node.crt -text -noout
+```
+
+The certificate will be signed by the CA issuer on the host and valid for the Steam Deck node ID.
+
+### Troubleshooting CA test
+
+| Issue | Cause | Fix |
+|---|---|---|
+| `Enrollment failed: seed unreachable` | Host not listening on `<HOST_IP>:7947` | Verify `ALL4ONE_ADVERTISE_HOST=<HOST_IP>` on host |
+| `Enrollment failed: CA not initialized` | Host is not tier=0 or has seeds configured | Re-check `tier=0` and empty `seeds=[]` in host config |
+| Steam Deck doesn't appear in peer list | Enrollment succeeded but discovery hasn't run yet | Wait 10 seconds (discovery polls every 5s) and retry |
+| `Join RPC failed: unauthorized` | Host expects shared_secret but it's not in config | Ensure `[security]` block has no `shared_secret` line on both nodes |
+
 #### Step A - start your local Steam Deck agent
 
 ```bash
