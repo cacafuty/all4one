@@ -166,6 +166,80 @@ Use the same `compose-secret` in the UI secret field.
 - If enrollment loops forever, confirm the base machine ports `7947`, `8947`, and `9947` are reachable from the Steam Deck.
 - If the Docker agents see the Steam Deck briefly and then mark it offline, confirm the Steam Deck firewall is not blocking TCP or UDP on `7947`.
 
+### 8. Steam Deck-only execution checklist (Phase 2 + Phase 3)
+
+Use this section as a practical runbook for what to do from the Steam Deck after the base machine has the 3 Phase 2 Docker agents running.
+
+Before you start on Steam Deck:
+
+- You know `<HOST_IP>` (base machine LAN IP).
+- Ports are reachable from Steam Deck: `<HOST_IP>:7946`, `8946`, `9946` (REST) and `7947`, `8947`, `9947` (gRPC).
+- You already replaced `<HOST_IP>` in your `steamdeck.toml` seeds.
+
+#### Step A - start your local Steam Deck agent
+
+```bash
+export PATH="$HOME/bin:$PATH"
+export ALL4ONE_ADVERTISE_HOST="<STEAM_DECK_IP>"
+all4one-agent start --config "$HOME/.config/all4one/steamdeck.toml"
+```
+
+Expected outcome:
+
+- Agent starts locally on Steam Deck (`:7946` / `:7947`).
+- Within a few seconds the base cluster should see 4 nodes total.
+
+#### Step B - verify cluster membership from Steam Deck
+
+```bash
+curl -s http://127.0.0.1:7946/health | python3 -m json.tool
+
+curl -s -H "X-All4One-Secret: compose-secret" \
+	"http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
+```
+
+Expected outcome:
+
+- Steam Deck health reports `status: ok`.
+- Node list from base machine includes your Steam Deck as Tier 2.
+
+#### Step C - validate Phase 3 visibility from Steam Deck browser
+
+Open from Steam Deck:
+
+- `http://<HOST_IP>:7946/`
+- `http://<HOST_IP>:8946/`
+- `http://<HOST_IP>:9946/`
+
+In each UI page, set the same secret (`compose-secret`) in the secret field.
+
+What to check in the UI:
+
+- Node topology shows 4 nodes.
+- Job lifecycle cards update when jobs run.
+- Operational timeline receives live events (node/job transitions).
+- Cluster pulse and distributed state are consistent across the three UI endpoints.
+
+#### Step D - trigger activity from Steam Deck (optional)
+
+```bash
+cat > /tmp/steamdeck-probe.yaml << 'EOF'
+runtime: python
+source: "volatile://scripts/probe.py"
+command: ["-c", "import time; print('steamdeck-probe'); time.sleep(2); print('done')"]
+resources:
+	cpu_cores: 1
+	memory_mb: 128
+EOF
+
+curl -s -X POST "http://<HOST_IP>:7946/v1/jobs" \
+	-H "Content-Type: application/yaml" \
+	-H "X-All4One-Secret: compose-secret" \
+	--data-binary @/tmp/steamdeck-probe.yaml | python3 -m json.tool
+```
+
+Then refresh the Phase 3 UI and verify recent jobs and timeline entries are updated.
+
 ## 4. Optional service installation
 
 - Linux: systemd unit

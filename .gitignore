@@ -3,3 +3,4 @@ tmp/
 .tmp-phase1-arm64/
 deploy/compose/.env
 deploy/compose/.env.local
+scripts/
