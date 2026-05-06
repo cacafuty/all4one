@@ -64,19 +64,20 @@ Record the LAN IP of the base machine as `<HOST_IP>`. The Steam Deck must be abl
 - `<HOST_IP>:8947` for `agent-b`
 - `<HOST_IP>:9947` for `agent-c`
 
-### 2. Build the agent on the Steam Deck
+### 2. Download the Linux x86-64 release binary
 
-SteamOS is Linux, but release binaries may not always match its glibc version. Building locally on the Steam Deck is the safest path.
+The GitHub release includes a pre-built `all4one-agent` for Linux x86-64, which runs directly on SteamOS without needing Rust installed.
 
 ```bash
-curl https://sh.rustup.rs -sSf | sh -s -- -y
-source "$HOME/.cargo/env"
-git clone https://github.com/cacafuty/all4one.git
-cd all4one
-cargo build -p all4one-agent --release
+# Replace X.Y.Z with the latest version (e.g. 0.1.7)
+VERSION="0.1.7"
 mkdir -p "$HOME/bin"
-cp target/release/all4one-agent "$HOME/bin/"
+curl -L "https://github.com/cacafuty/all4one/releases/download/v${VERSION}/all4one-agent-x86_64-unknown-linux-gnu" \
+     -o "$HOME/bin/all4one-agent"
+chmod +x "$HOME/bin/all4one-agent"
 export PATH="$HOME/bin:$PATH"
+# Verify
+all4one-agent --version
 ```
 
 ### 3. Create a Steam Deck node config

@@ -25,12 +25,12 @@ openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 sled = "0.34"
 rcgen = { version = "0.13", features = ["pem"] }
 rustls = { version = "0.23", features = ["std"] }
-rustls-pemfile = "2"
 tokio-rustls = "0.26"
 reed-solomon = "0.2"
 zstd = "0.13"
 sha2 = "0.10"
 base64 = "0.22"
+rustls-pki-types = { version = "1", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

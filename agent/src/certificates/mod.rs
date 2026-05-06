@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use rcgen::generate_simple_self_signed;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -123,7 +124,9 @@ impl CertificateManager {
         let ca_pem = fs::read_to_string(&ca_path)?;
 
         // Parse PEM
-        let certs = rustls_pemfile::certs(&mut ca_pem.as_bytes()).collect::<Result<Vec<_>, _>>()?;
+        let certs = CertificateDer::pem_slice_iter(ca_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("Failed to parse CA PEM: {e}"))?;
 
         if certs.is_empty() {
             return Err(anyhow!("No certificate found in CA file"));
@@ -137,8 +140,9 @@ impl CertificateManager {
         let cert_path = self.certs_dir.join("node.crt");
         let cert_pem = fs::read_to_string(&cert_path)?;
 
-        let certs =
-            rustls_pemfile::certs(&mut cert_pem.as_bytes()).collect::<Result<Vec<_>, _>>()?;
+        let certs = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("Failed to parse node cert PEM: {e}"))?;
 
         if certs.is_empty() {
             return Err(anyhow!("No certificate found in node cert file"));
@@ -152,10 +156,8 @@ impl CertificateManager {
         let key_path = self.certs_dir.join("node.key");
         let key_pem = fs::read_to_string(&key_path)?;
 
-        let mut reader = key_pem.as_bytes();
-        let keys = rustls_pemfile::private_key(&mut reader)?;
-
-        keys.ok_or_else(|| anyhow!("No private key found in node key file"))
+        PrivateKeyDer::from_pem_slice(key_pem.as_bytes())
+            .map_err(|e| anyhow!("No private key found in node key file: {e}"))
     }
 
     /// Check if node is revoked by looking in CRL
