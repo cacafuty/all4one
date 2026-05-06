@@ -234,6 +234,7 @@ fn build_command(
 fn apply_non_docker_memory_limit(command: &mut Command, resources: &JobResources) {
     #[cfg(unix)]
     {
+        #[allow(unused_imports)]
         use std::os::unix::process::CommandExt;
 
         let limit_bytes = (resources.memory_mb as u64)
