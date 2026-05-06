@@ -113,6 +113,7 @@ mod tests {
             security: SecurityConfig {
                 mode: "dev".to_string(),
                 shared_secret: "s".to_string(),
+                ca_cert_path: String::new(),
             },
             executor: ExecutorConfig {
                 max_concurrent_jobs: 8,

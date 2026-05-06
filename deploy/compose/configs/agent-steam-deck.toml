@@ -21,6 +21,7 @@ seeds = ["192.168.1.135:7947"]
 
 [security]
 mode = "dev"
+ca_cert_path = "~/.config/all4one/ca.crt"
 
 [executor]
 max_concurrent_jobs = 4

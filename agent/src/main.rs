@@ -170,6 +170,12 @@ async fn enroll_with_seed_ca(
 ) -> anyhow::Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
 
+    let ca_cert_path = if config.security.ca_cert_path.is_empty() {
+        None
+    } else {
+        Some(config.security.ca_cert_path.as_str())
+    };
+
     for _attempt in 0..20 {
         let join_secret = if config.security.mode == "dev" {
             let secret = config.security.shared_secret.trim();
@@ -183,7 +189,14 @@ async fn enroll_with_seed_ca(
         };
 
         for seed in &config.discovery.seeds {
-            match crate::grpc_client::request_join(seed, node_id.0, join_secret).await {
+            match crate::grpc_client::request_join_with_ca(
+                seed,
+                node_id.0,
+                join_secret,
+                ca_cert_path,
+            )
+            .await
+            {
                 Ok(bundle) => {
                     cert_manager.save_node_cert(
                         &bundle.node_cert_pem,

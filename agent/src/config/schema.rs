@@ -56,6 +56,8 @@ pub struct SecurityConfig {
     pub mode: String,
     #[serde(default)]
     pub shared_secret: String,
+    #[serde(default)]
+    pub ca_cert_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

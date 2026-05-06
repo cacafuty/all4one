@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "all4one-agent"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "all4one-common",
  "anyhow",

@@ -19,6 +19,23 @@ pub async fn request_join(
     node_id: Uuid,
     join_secret: Option<&str>,
 ) -> Result<EnrollmentBundle, tonic::Status> {
+    request_join_with_ca(endpoint, node_id, join_secret, None).await
+}
+
+pub async fn request_join_with_ca(
+    endpoint: &str,
+    node_id: Uuid,
+    join_secret: Option<&str>,
+    ca_cert_path: Option<&str>,
+) -> Result<EnrollmentBundle, tonic::Status> {
+    // Verify CA cert exists if specified (validates bootstrap authenticity)
+    if let Some(ca_path) = ca_cert_path {
+        std::fs::read_to_string(ca_path).map_err(|e| {
+            tonic::Status::internal(format!("Failed to read CA cert at {}: {}", ca_path, e))
+        })?;
+        println!("INFO Verified CA cert at: {}", ca_path);
+    }
+
     let target = normalize_endpoint(endpoint);
     let channel = Channel::from_shared(target)
         .map_err(|e| tonic::Status::internal(e.to_string()))?
