@@ -1,0 +1,27 @@
+# 06 — Batch transformation simulation in a Python container
+runtime: docker
+source: python:3.11-alpine
+command:
+  - python
+  - -c
+  - |
+    rows = [
+        {"name": "img-001", "width": 4000, "height": 3000},
+        {"name": "img-002", "width": 1920, "height": 1080},
+        {"name": "img-003", "width": 1280, "height": 720},
+    ]
+    resized = []
+    for row in rows:
+        resized.append({
+            "name": row["name"],
+            "width": row["width"] // 2,
+            "height": row["height"] // 2,
+        })
+    print(f"resized={len(resized)} first={resized[0]['name']}")
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 1
+  requires_capabilities:
+    docker: true

@@ -1,0 +1,24 @@
+# 10 — Monte Carlo simulation for Pi in a Python container
+runtime: docker
+source: python:3.11-alpine
+command:
+  - python
+  - -c
+  - |
+    import random
+    samples = 50000
+    inside = 0
+    random.seed(42)
+    for _ in range(samples):
+        x = random.random()
+        y = random.random()
+        if x * x + y * y <= 1.0:
+            inside += 1
+    print(f"pi_monte_carlo={4 * inside / samples:.6f}")
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 0
+  requires_capabilities:
+    docker: true

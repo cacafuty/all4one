@@ -1,0 +1,13 @@
+# 01 — Nginx web server smoke test
+runtime: docker
+source: nginx:1.25-alpine
+command:
+  - nginx
+  - -t
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 0
+  requires_capabilities:
+    docker: true

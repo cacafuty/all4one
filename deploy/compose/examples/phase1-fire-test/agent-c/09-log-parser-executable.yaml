@@ -1,0 +1,15 @@
+# 09 — Log parser example with POSIX shell executable runtime
+runtime: executable
+source: /bin/sh
+command:
+  - -lc
+  - |
+    printf 'INFO start\nWARN cache_miss\nERROR downstream_timeout\nERROR downstream_timeout\nINFO done\n' \
+      | grep -c '^ERROR' \
+      | xargs -I{} echo "errors={}"
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 1
+  requires_capabilities: {}

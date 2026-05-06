@@ -1,134 +1,101 @@
-# Laboratorio local de Fase 1 con Docker Compose
+# Docker Compose Lab
 
-Este laboratorio levanta tres contenedores con el agente Rust para pruebas locales.
+This folder provides a local multi-node All4One lab.
 
-Para validar el escenario mixto de Fase 1 (3 agentes en Docker + 1 agente local en Windows), usa la seccion **Experimento mixto 4 nodos** de este mismo documento.
-
-## Arranque
+## Start
 
 ```bash
 cd deploy/compose
 docker compose up --build -d
 ```
 
-## Verificacion
+## Start from GitHub Releases
+
+```bash
+cd deploy/compose
+VERSION=0.1.5 GH_REPO=cacafuty/all4one docker compose -f docker-compose.release.yml up --build -d
+```
+
+## Validate
 
 ```bash
 docker compose ps
 docker compose logs -f agent-a
-```
-
-## Parada
-
-```bash
-docker compose down
-```
-
-## Limpieza completa (incluye volumenes)
-
-```bash
-docker compose down -v
-```
-
-## Nodos
-
-- `agent-a`: Tier 0, scheduler+executor.
-- `agent-b`: Tier 1, executor.
-- `agent-c`: Tier 1, executor.
-
-Los `agent.toml` estan en `deploy/compose/configs/`.
-
-## Experimento mixto 4 nodos (3 Docker + 1 Windows local)
-
-### Objetivo
-
-Cerrar los pendientes de Fase 1 en entorno Windows:
-
-- Cola/retry con `tier_min: 2` usando un cuarto nodo que aparece despues.
-- Verificacion de limite de memoria Docker en Windows (`resources.memory_mb`) con evidencia local.
-
-### Topologia
-
-- Docker:
-  - `agent-a` (Tier 0, scheduler+executor)
-  - `agent-b` (Tier 1, executor)
-  - `agent-c` (Tier 1, executor)
-- Windows local:
-  - `agent-windows-local` (Tier 2, executor)
-
-### Preparacion
-
-1. Arranca compose:
-
-```bash
-docker compose -f deploy/compose/docker-compose.yml up --build -d
-```
-
-Automatizacion opcional desde PowerShell:
-
-```powershell
-./scripts/phase1-mixed-experiment.ps1
-```
-
-1. Verifica convergencia inicial en `agent-a`:
-
-```bash
 curl -s -H "X-All4One-Secret: compose-secret" http://localhost:7946/v1/nodes
 ```
 
-Debe devolver `total: 3` y `online: 3`.
+## Fire test examples
 
-1. Arranca el agente local Windows con `deploy/compose/configs/agent-win-local.toml`.
+Examples are under:
 
-Si tienes binario local disponible, puedes arrancarlo desde el script:
+- `deploy/compose/examples/phase1-fire-test/agent-a/`
+- `deploy/compose/examples/phase1-fire-test/agent-b/`
+- `deploy/compose/examples/phase1-fire-test/agent-c/`
+
+Run:
 
 ```powershell
-./scripts/phase1-mixed-experiment.ps1 -StartLocal -AgentExePath C:/ruta/all4one-agent.exe
+./scripts/phase1-fire-test.ps1
 ```
 
-El script publica `ALL4ONE_ADVERTISE_HOST=host.docker.internal` para que el nodo local anuncie un endpoint alcanzable desde los contenedores.
+## Phase 2 — Distributed Storage
 
-### Prueba A: Cola y retry con Tier 2
+Phase 2 adds `roles.storage = true` to all three agents and verifies that data is shared **only via gRPC** — each agent gets its own isolated Docker volume (`phase2_agent_a_data`, etc.), so there is no shared filesystem between them.
 
-1. Con solo `agent-a/b/c` levantados, envia un job con `tier_min: 2`.
-2. Verifica que queda en `status: queued`.
-3. Arranca `agent-windows-local`.
-4. Verifica transicion `queued -> running` en menos de 15s.
+Phase 2 configs use full-mesh static seeds across `agent-a`, `agent-b`, and `agent-c` so each storage node can discover both peers and fan out shards in all directions.
 
-Payload sugerido:
+### Start Phase 2 cluster
 
-```yaml
-runtime: executable
-source: cmd
-command: ["/C", "echo hello-from-tier2"]
-resources:
-  cpu_cores: 1
-  memory_mb: 128
-constraints:
-  tier_min: 2
+```bash
+cd deploy/compose
+docker compose -f docker-compose.phase2.yml up --build -d
 ```
 
-### Prueba B: Limite de memoria Docker en Windows
+### Run the 10-scenario storage test suite
 
-1. Envia un job `runtime: docker` con `resources.memory_mb: 512`.
-2. Confirma que el job se asigna al nodo Windows (`assigned_to` del nodo local).
-3. Captura evidencia del limite de memoria desde Windows (Process Explorer o equivalente de Job Object).
-
-Payload sugerido:
-
-```yaml
-runtime: docker
-source: mcr.microsoft.com/powershell:lts-nanoserver-ltsc2022
-command: ["pwsh", "-NoLogo", "-Command", "Start-Sleep -Seconds 40"]
-resources:
-  cpu_cores: 1
-  memory_mb: 512
-constraints:
-  tier_min: 2
-  requires_capabilities:
-    docker: true
+```powershell
+./scripts/phase2-storage-test.ps1
 ```
 
-### Nota de alcance
+### Build reliability note
 
-Este documento define la secuencia del experimento. El estado de cierre de Fase 1 se mantiene en `docs/phases/phase-1.md` para evitar duplicacion de criterios.
+The compose Dockerfile pins Rust build parallelism (`CARGO_BUILD_JOBS=2`) to reduce memory pressure during image builds. This avoids intermittent BuildKit EOF failures on constrained machines.
+
+What the tests cover:
+
+| # | Scenario |
+|---|---|
+| T01 | Local write and read on agent-a |
+| T02 | Shard replication: write to A, read from B |
+| T03 | Shard replication: write to A, read from C |
+| T04 | Idempotent write: same content → same ETag |
+| T05 | All four storage policies (hot/warm/cold/archive) |
+| T06 | Bucket isolation: same key in two buckets |
+| T07 | DELETE removes object; GET returns 404 |
+| T08 | Prefix-filtered bucket listing |
+| T09 | Large object (512 KB) SHA-256 end-to-end integrity |
+| T10 | All-node write mesh: distributed memory convergence |
+
+### Running Phase 1 and Phase 2 side by side
+
+Both compose files use the same host ports (7946/8946/9946). To run them simultaneously, use project names:
+
+```bash
+docker compose -p phase1 -f docker-compose.yml up -d
+docker compose -p phase2 -f docker-compose.phase2.yml up -d
+```
+
+### Stop Phase 2 cluster
+
+```bash
+docker compose -f docker-compose.phase2.yml down
+# Remove phase2 volumes (data is isolated from phase1):
+docker compose -f docker-compose.phase2.yml down -v
+```
+
+## Stop
+
+```bash
+docker compose down
+docker compose down -v
+```

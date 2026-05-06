@@ -8,6 +8,8 @@ message SubmitJobRequest {
   repeated string command = 3;
   uint32 cpu_cores = 4;
   uint32 memory_mb = 5;
+  string job_id = 6;
+  string origin_endpoint = 7;
 }
 
 message SubmitJobResponse {
@@ -17,6 +19,62 @@ message SubmitJobResponse {
   string created_at = 4;
 }
 
+message ReportJobStatusRequest {
+  string job_id = 1;
+  string status = 2;
+  int32 exit_code = 3;
+  string error = 4;
+  string source_node_id = 5;
+}
+
+message ReportJobStatusResponse {}
+
+message JoinRequest {
+  string node_id = 1;
+  string csr_pem = 2;
+  string join_secret = 3;
+}
+
+message JoinResponse {
+  string node_cert_pem = 1;
+  string node_key_pem = 2;
+  string ca_cert_pem = 3;
+  int64 expires_at_unix = 4;
+}
+
+// Inter-node chunk transfer — node-to-node only, not exposed externally
+message TransferChunkRequest {
+  string bucket = 1;
+  string key = 2;
+  uint32 shard_index = 3;
+  bytes data = 4;
+  string hash = 5;       // SHA-256 of shard bytes
+  string policy = 6;     // "hot", "warm", "cold", "archive"
+  uint64 object_size = 7;
+  string etag = 8;       // SHA-256 of full object
+}
+
+message TransferChunkResponse {
+  bool accepted = 1;
+  string error = 2;
+}
+
+message FetchChunkRequest {
+  string bucket = 1;
+  string key = 2;
+  uint32 shard_index = 3;
+}
+
+message FetchChunkResponse {
+  bytes data = 1;
+  string hash = 2;
+  bool found = 3;
+}
+
 service AgentService {
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc ReportJobStatus(ReportJobStatusRequest) returns (ReportJobStatusResponse);
+  rpc Join(JoinRequest) returns (JoinResponse);
+  rpc TransferChunk(TransferChunkRequest) returns (TransferChunkResponse);
+  rpc FetchChunk(FetchChunkRequest) returns (FetchChunkResponse);
 }

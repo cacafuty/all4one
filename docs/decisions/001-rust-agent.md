@@ -1,138 +1,137 @@
-# ADR-001: Rust para el agente
+# ADR-001: Rust for the agent
 
-**Estado**: Aceptado
-**Fecha**: 2026-04-08
-
----
-
-## Contexto
-
-All4One necesita un único binario que corra en Linux x86_64, Linux ARM64, macOS
-ARM64, macOS x86_64, Windows x86_64 y Android ARM64, sin instalar runtime
-externo en el dispositivo destino. El binario implementa concurrencia intensiva
-(SWIM UDP, gRPC streaming, executor de procesos, Raft embebido), comparte estado
-mutable entre tareas (ClusterState, JobQueue), y debe consumir < 20 MB de RAM
-en reposo en un Raspberry Pi.
-
-Los candidatos evaluados fueron: Rust, Go, C/C++.
+**Status**: Accepted
+**Date**: 2026-04-08
 
 ---
 
-## Decisión
+## Context
 
-**Rust** es el lenguaje del agente. Kotlin + Rust JNI para el agente Android.
+All4One needs a single binary that runs on Linux x86_64, Linux ARM64, macOS
+ARM64, macOS x86_64, Windows x86_64, and Android ARM64, without installing any
+external runtime on the target device. The binary implements intensive concurrency
+(SWIM UDP, gRPC streaming, process executor, embedded Raft), shares mutable state
+across tasks (ClusterState, JobQueue), and must consume < 20 MB of RAM at idle
+on a Raspberry Pi.
+
+Candidates evaluated: Rust, Go, C/C++.
 
 ---
 
-## Razones
+## Decision
 
-### Seguridad de memoria en compilación
+**Rust** is the agent language. Kotlin + Rust JNI for the Android agent.
 
-Rust garantiza ausencia de data races y ausencia de use-after-free en tiempo
-de compilación, sin overhead de garbage collector. El borrow checker rechaza
-código con accesos concurrentes sin sincronización explícita.
+---
 
-Esto es crítico en el módulo gossip: el `ClusterState` compartido entre tareas
-tokio con `Arc<RwLock<>>` es correcto por construcción — el compilador rechaza
-lecturas y escrituras sin el lock adecuado.
+## Reasons
 
-### Cross-compilation nativa
+### Compile-time memory safety
 
-Un único `Cargo.toml` con cross-compilation para todos los targets:
+Rust guarantees the absence of data races and use-after-free at compile time,
+without garbage collector overhead. The borrow checker rejects code with
+concurrent accesses that lack explicit synchronization.
+
+This is critical in the gossip module: the `ClusterState` shared across tokio
+tasks using `Arc<RwLock<>>` is correct by construction — the compiler rejects
+reads and writes without the proper lock.
+
+### Native cross-compilation
+
+A single `Cargo.toml` with cross-compilation for all targets:
 
 ```bash
-cargo build --target x86_64-unknown-linux-gnu     # CI para Linux x86_64
+cargo build --target x86_64-unknown-linux-gnu     # CI for Linux x86_64
 cargo build --target aarch64-unknown-linux-gnu    # Raspberry Pi, ARM servers
 cargo build --target aarch64-apple-darwin         # MacBook M1/M2/M3
 cargo build --target x86_64-pc-windows-gnu        # Windows
 cargo build --target aarch64-linux-android        # Android
 ```
 
-Sin cambios de código entre plataformas — las diferencias se manejan con
+No code changes between platforms — differences are handled with
 `#[cfg(target_os = "linux")]`, `#[cfg(target_os = "macos")]`, etc.
 
-### Ecosistema de crates con licencias limpias
+### Crate ecosystem with clean licenses
 
-Todas las dependencias críticas tienen licencias MIT o Apache 2.0, compatibles
-con distribución comercial propietaria:
+All critical dependencies have MIT or Apache 2.0 licenses, compatible
+with proprietary commercial distribution:
 
-- `tokio` (MIT): async runtime con excelente soporte para tareas concurrentes.
-- `axum` (MIT): API REST sin overhead.
-- `tonic` (MIT): gRPC client/server con streaming bidireccional nativo.
-- `openraft` (Apache 2.0): Raft embebido, sin dependencia externa de etcd.
-- `fuser` (MIT): FUSE en Linux y macOS sin dependencia de libfuse del sistema.
-- `wasmtime` (Apache 2.0): runtime WASM embebido.
+- `tokio` (MIT): async runtime with excellent support for concurrent tasks.
+- `axum` (MIT): REST API without overhead.
+- `tonic` (MIT): gRPC client/server with native bidirectional streaming.
+- `openraft` (Apache 2.0): embedded Raft, no external etcd dependency.
+- `fuser` (MIT): FUSE on Linux and macOS without system libfuse dependency.
+- `wasmtime` (Apache 2.0): embedded WASM runtime.
 - `reed-solomon` (Apache 2.0): erasure coding.
-- `rcgen` (MIT): generación de certificados X.509 sin dependencia de OpenSSL.
-- `rustls` (Apache 2.0): TLS en Rust puro, sin OpenSSL.
+- `rcgen` (MIT): X.509 certificate generation without OpenSSL dependency.
+- `rustls` (Apache 2.0): TLS in pure Rust, without OpenSSL.
 
-### Rendimiento predecible
+### Predictable performance
 
-Sin GC: no hay pausas de garbage collection. El heartbeat SWIM cada 10 segundos
-no sufre jitter por un GC que decida ejecutarse justo en ese momento. La detección
-de fallos (SUSPECTED/OFFLINE) depende de la ausencia de respuesta en ventanas de
-tiempo precisas — las pausas GC de Go pueden producir falsos positivos en
-clústeres bajo carga.
+No GC: no garbage collection pauses. The SWIM heartbeat every 10 seconds
+does not suffer jitter from a GC deciding to run at that moment. Failure
+detection (SUSPECTED/OFFLINE) depends on the absence of response within precise
+time windows — Go's GC pauses can produce false positives in
+clusters under load.
 
-Benchmarks de referencia (mismo nodo, 1000 heartbeats):
+Reference benchmarks (same node, 1000 heartbeats):
 - P50: 0.8 ms | P99: 1.2 ms | P999: 2.1 ms (Rust/tokio)
-- P50: 1.1 ms | P99: 4.8 ms | P999: 45 ms (Go — los picos coinciden con GC)
+- P50: 1.1 ms | P99: 4.8 ms | P999: 45 ms (Go — spikes coincide with GC)
 
-### Consumo de memoria
+### Memory footprint
 
-El modelo de memoria de Rust (sin heap implícito, sin GC overhead) permite
-mantenerse en < 20 MB de RAM en reposo, objetivo crítico para Raspberry Pi
-y dispositivos Android con RAM limitada.
+Rust's memory model (no implicit heap, no GC overhead) allows staying
+under < 20 MB of RAM at idle, a critical goal for Raspberry Pi
+and Android devices with limited RAM.
 
 ---
 
-## Alternativas descartadas
+## Rejected alternatives
 
 ### Go
 
-**Descartado por**:
+**Rejected because**:
 
-1. **GC con pausas no deterministas**: el garbage collector de Go produce pausas
-   de latencia variable (típicamente 0.1–50 ms en aplicaciones reales bajo carga).
-   Esto afecta directamente a la detección de fallos SWIM: un nodo con GC activo
-   puede no responder al heartbeat a tiempo y ser marcado falsamente como SUSPECTED.
+1. **Non-deterministic GC pauses**: Go's garbage collector produces pauses with
+   variable latency (typically 0.1–50 ms in real applications under load).
+   This directly affects SWIM failure detection: a node with an active GC
+   may not respond to a heartbeat in time and be falsely marked as SUSPECTED.
 
-2. **Cross-compilation limitada para Android**: Go puede compilar para Android pero
-   sin soporte nativo de CGO (necesario para wasmtime, rcgen, fuser). El agente
-   Android requiere Rust JNI de todos modos para acceder a capacidades nativas.
+2. **Limited cross-compilation for Android**: Go can compile for Android but
+   without native CGO support (required for wasmtime, rcgen, fuser). The Android
+   agent requires Rust JNI regardless to access native capabilities.
 
-3. **Ausencia de garantías en tiempo de compilación para concurrencia**: Go
-   detecta data races solo en runtime con `-race`. En producción sin `-race`,
-   los data races son bugs silenciosos.
+3. **No compile-time guarantees for concurrency**: Go
+   detects data races only at runtime with `-race`. In production without `-race`,
+   data races are silent bugs.
 
 ### C/C++
 
-**Descartado por**:
+**Rejected because**:
 
-1. **Sin garantías de seguridad de memoria**: buffer overflows, use-after-free,
-   double-free son posibles y solo se detectan en runtime. El agente gestiona
-   datos de usuarios — un bug de memoria en el módulo storage podría corromper
-   datos silenciosamente.
+1. **No memory safety guarantees**: buffer overflows, use-after-free,
+   double-free are possible and only detected at runtime. The agent manages
+   user data — a memory bug in the storage module could silently corrupt data.
 
-2. **Sin protección contra data races**: C++ ofrece `std::mutex` y `std::atomic`
-   pero no impide al compilador que el código los use incorrectamente.
+2. **No protection against data races**: C++ offers `std::mutex` and `std::atomic`
+   but does not prevent the compiler from allowing code to use them incorrectly.
 
-3. **Ecosistema de librerías**: no existe un equivalente a `tonic` (gRPC con
-   streaming async) o `openraft` (Raft embebido) con licencias limpias y
-   mantenimiento activo en el ecosistema C++.
+3. **Library ecosystem**: no equivalent to `tonic` (gRPC with
+   async streaming) or `openraft` (embedded Raft) with clean licenses and
+   active maintenance in the C++ ecosystem.
 
 ---
 
-## Consecuencias aceptadas
+## Accepted trade-offs
 
-- **Curva de aprendizaje**: el borrow checker y el sistema de tipos de Rust tienen
-  curva de aprendizaje más pronunciada que Go o Python. Los primeros sprints
-  de implementación serán más lentos.
+- **Learning curve**: Rust's borrow checker and type system have a
+  steeper learning curve than Go or Python. The first implementation sprints
+  will be slower.
 
-- **Compilación lenta**: Rust compila más lento que Go. Tiempo de compilación
-  incremental en desarrollo: ~5–15 segundos. Compilación limpia: ~2–5 minutos.
-  Mitigación: `sccache` para caché de compilación en CI.
+- **Slow compilation**: Rust compiles slower than Go. Incremental build
+  time in development: ~5–15 seconds. Clean build: ~2–5 minutes.
+  Mitigation: `sccache` for build caching in CI.
 
-- **Android JNI**: el agente Android requiere una capa JNI (Kotlin ↔ Rust) que
-  añade complejidad de integración. La alternativa sería Go o Kotlin puro, pero
-  implicaría duplicar lógica crítica de red y storage.
+- **Android JNI**: the Android agent requires a JNI layer (Kotlin ↔ Rust) that
+  adds integration complexity. The alternative would be Go or pure Kotlin, but
+  that would mean duplicating critical networking and storage logic.

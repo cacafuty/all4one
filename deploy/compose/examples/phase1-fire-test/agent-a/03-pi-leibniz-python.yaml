@@ -1,0 +1,21 @@
+# 03 — Pi approximation in a Python container
+runtime: docker
+source: python:3.11-alpine
+command:
+  - python
+  - -c
+  - |
+    terms = 200000
+    total = 0.0
+    sign = 1.0
+    for index in range(terms):
+        total += sign / (2 * index + 1)
+        sign = -sign
+    print(f"pi_leibniz={4 * total:.6f}")
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 0
+  requires_capabilities:
+    docker: true

@@ -1,29 +1,34 @@
-# Visión general de la arquitectura
+# Architecture Overview
 
-## Premisa fundamental
+## Fundamental premise
 
-All4One convierte hardware heterogéneo existente en un clúster unificado de cómputo
-y almacenamiento. El **principio central** es que no existe un nodo obligatorio de
-orquestación: cualquier nodo puede recibir jobs y coordinar, y el clúster funciona
-con lo que haya disponible en cada momento.
+All4One turns heterogeneous existing hardware into a unified compute and storage
+cluster. The core principle is that there is no mandatory orchestrator node:
+any node can accept jobs and coordinate work, and the cluster runs with whatever
+is available at a given time.
 
-Esta premisa tiene consecuencias directas en cada decisión de diseño:
+**The system works with any number of nodes, from 1 to N.** A single running
+agent is already a fully functional one-node cluster: it accepts jobs, executes
+work, and stores data. Adding nodes increases compute capacity, enables stronger
+data replication, and improves resilience.
 
-- El agente es un **único binario** sin runtime externo.
-- El consenso es **embebido** (openraft), no una dependencia externa (etcd).
-- El descubrimiento es **mDNS + seeds**, sin servidor de nombres centralizado.
-- El scheduling es **distribuido**: el primer nodo que recibe el job lo coloca.
+This principle drives every major design decision:
+
+- The agent is a **single Rust binary** with no external runtime.
+- Consensus is **embedded** (openraft), not delegated to external etcd.
+- Discovery is **mDNS + seeds**, with no central naming server.
+- Scheduling is **distributed**: the first node receiving a job places it.
 
 ---
 
-## Componente único: el agente
+## Single component: the agent
 
-El sistema completo se reduce a **un único binario Rust** instalado en cada
-dispositivo. No hay coordinadores separados, no hay metaservidores, no hay proxies.
+The entire system is one binary installed on each device. No separate
+coordinator, metadata server, or proxy is required.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         AGENTE all4one                              │
+│                         ALL4ONE AGENT                              │
 │                                                                     │
 │  ┌──────────┐  ┌──────────┐  ┌────────────────────────────────┐   │
 │  │  config  │  │   node   │  │         discovery              │   │
@@ -31,151 +36,128 @@ dispositivo. No hay coordinadores separados, no hay metaservidores, no hay proxi
 │  └──────────┘  └──────────┘  └────────────────────────────────┘   │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                    gossip (SWIM/UDP:7947)                     │  │
-│  │          ClusterState: HashMap<NodeId, NodeInfo>              │  │
-│  │          tokio::broadcast::Sender<MembershipEvent>            │  │
+│  │                   gossip (SWIM/UDP:7947)                    │  │
+│  │         ClusterState: HashMap<NodeId, NodeInfo>            │  │
+│  │         tokio::broadcast::Sender<MembershipEvent>          │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                  raft (openraft, Fase 2+)                     │  │
-│  │    BlockMap │ JobRegistry │ ClusterConfig │ CRL               │  │
+│  │                  raft (openraft, Phase 2+)                 │  │
+│  │   BlockMap | JobRegistry | ClusterConfig | CRL             │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│  │  scheduler   │  │   executor   │  │  storage (Fase 2+)        │ │
-│  │  JobQueue    │  │  docker.rs   │  │  chunks + index           │ │
-│  │  placement   │  │  jar.rs      │  │  SHA-256 + erasure        │ │
-│  │  algorithm   │  │  python.rs   │  │  scrubbing                │ │
-│  │              │  │  wasm.rs     │  │                            │ │
+│  │  scheduler   │  │   executor   │  │  storage (Phase 2+)      │ │
+│  │  JobQueue    │  │  docker.rs   │  │  chunks + index          │ │
+│  │  placement   │  │  jar.rs      │  │  SHA-256 + erasure       │ │
+│  │  algorithm   │  │  python.rs   │  │  scrubbing               │ │
+│  │              │  │  wasm.rs     │  │                          │ │
 │  └──────────────┘  └──────────────┘  └──────────────────────────┘ │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │            lifecycle (Fase 3+, solo líder Raft)               │  │
-│  │            heat score + transiciones de tier                  │  │
+│  │              lifecycle (Phase 4+, Raft leader only)         │  │
+│  │            heat score + tier transitions                    │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌─────────────────────────┐  ┌───────────────────────────────┐   │
 │  │  api_rest (axum :7946)  │  │  grpc_server (tonic :7947)    │   │
-│  │  grpc_client (pool)     │  │  certificates (Fase 2+)        │   │
+│  │  grpc_client (pool)     │  │  certificates (Phase 2+)      │   │
 │  └─────────────────────────┘  └───────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Tiers de nodos
+## Node tiers
 
-Los tiers no son niveles de calidad sino **patrones de disponibilidad temporal**.
-El scheduler es consciente de estas ventanas y planifica en consecuencia.
+Tiers represent **availability patterns**, not quality classes.
+The scheduler uses these patterns when making placement decisions.
 
-```
-Tier 0 — 24/7, columna vertebral
-  ┌────────────────────────────────────────────────────────────────┐
-  │  Servidores rack │ NAS │ Raspberry Pi dedicado                 │
-  │  • Metadata crítica SIEMPRE aquí                               │
-  │  • Al menos una réplica de cada dato aquí                      │
-  │  • Participan en quórum Raft                                   │
-  │  • Nunca Tier 2 para réplicas que estén solo en Tier 0         │
-  └────────────────────────────────────────────────────────────────┘
-
-Tier 1 — disponibilidad predecible con horario (cron)
-  ┌────────────────────────────────────────────────────────────────┐
-  │  PCs de oficina │ portátiles de empresa                        │
-  │  • El scheduler planifica dentro de su ventana                 │
-  │  • Participan en quórum Raft                                   │
-  │  • Pueden hospedar réplicas secundarias                        │
-  └────────────────────────────────────────────────────────────────┘
-
-Tier 2 — oportunista, sin garantías
-  ┌────────────────────────────────────────────────────────────────┐
-  │  Portátiles personales │ móviles Android                       │
-  │  • Solo cómputo efímero y storage no crítico                   │
-  │  • NO participan en quórum Raft                                │
-  │  • DrainNotice automático al 20% batería (Android)             │
-  └────────────────────────────────────────────────────────────────┘
-```
+- **Tier 0**: 24/7 backbone (servers, NAS, dedicated Raspberry Pi).
+  Critical metadata always lives here and at least one data replica remains here.
+- **Tier 1**: predictable schedules (office PCs, managed laptops).
+  Can participate in quorum and host secondary replicas.
+- **Tier 2**: opportunistic nodes (personal laptops, Android).
+  No quorum participation; suited for opportunistic compute/storage.
 
 ---
 
-## Roles del agente
+## Agent roles
 
-Cada agente puede ejercer hasta tres roles simultáneamente, activados
-independientemente en `agent.toml`:
+Each node can enable up to three independent roles in `agent.toml`.
 
-| Rol       | Activado con          | Responsabilidad                                     |
-|-----------|-----------------------|-----------------------------------------------------|
-| SCHEDULER | `roles.scheduler=true` | Recibe jobs via REST, ejecuta el algoritmo de placement, delega via gRPC |
-| EXECUTOR  | `roles.executor=true` | Ejecuta jobs asignados. Gestiona cgroups, stdout/stderr, ciclo de vida |
-| STORAGE   | `roles.storage=true`  | Almacena chunks locales. Sirve lecturas. Participa en réplicas/erasure |
+| Role      | Config flag             | Responsibility |
+|-----------|-------------------------|----------------|
+| SCHEDULER | `roles.scheduler=true`  | Accepts jobs via REST, computes placement, dispatches over gRPC |
+| EXECUTOR  | `roles.executor=true`   | Runs jobs, manages lifecycle and stdout/stderr |
+| STORAGE   | `roles.storage=true`    | Stores local chunks, serves reads, participates in replication/erasure |
 
-Un nodo Tier 0 típico tiene los tres roles activos. Un nodo Android solo tiene
-STORAGE activo.
+A typical Tier 0 node enables all three roles.
 
 ---
 
-## Flujo de un job de extremo a extremo
+## End-to-end job flow
 
 ```
-Cliente (curl / SDK / boto3)
+Client (curl / SDK / boto3)
          │
          │  POST /v1/jobs  (YAML/JSON)
          ▼
   ┌─────────────┐
-  │  api_rest   │  valida JobSpec, genera JobId, pasa a scheduler
+  │  api_rest   │ validates spec, creates JobId, forwards to scheduler
   └──────┬──────┘
          │
          ▼
   ┌─────────────┐
-  │  scheduler  │  snapshot de ClusterState
-  │             │  filtra candidatos por capabilities/recursos/tier/ventana
-  │             │  puntúa por locality/ventana/recursos/tier
-  │             │  elige nodo_elegido
+  │  scheduler  │ snapshot ClusterState
+  │             │ filter by capabilities/resources/tier/window
+  │             │ score candidates and choose target node
   └──────┬──────┘
          │
     ┌────┴─────────────────────────────┐
-    │ nodo_elegido == self?             │
+    │ chosen_node == self?             │
     Yes                                No
     │                                  │
     ▼                                  ▼
- executor.launch()          grpc_client.launch_job(nodo_elegido, ...)
+ executor.launch()          grpc_client.launch_job(chosen_node, ...)
     │                                  │
     ▼                                  ▼
- docker/jar/python/          nodo remoto → executor.launch()
+ docker/jar/python/          remote node -> executor.launch()
  wasm/executable
     │
     ▼
- JobEvent stream (Started → OutputLine* → Completed|Failed)
+ JobEvent stream (Started -> OutputLine* -> Completed|Failed)
     │
     ▼
- gossip propaga estado al clúster
+ gossip propagates state across the cluster
 ```
 
 ---
 
-## Flujo de almacenamiento (Fase 2+)
+## Storage flow (Phase 2+)
 
 ```
-Cliente
+Client
   │  PUT /v1/storage/bucket/key  (bytes)
   ▼
-api_rest → storage module
+api_rest -> storage module
   │
-  ├── chunking (default 64MB por chunk)
-  ├── SHA-256 por chunk
-  ├── compresión según tier (zstd)
-  ├── erasure coding (Reed-Solomon según tier)
-  │
-  ▼
-scheduler de chunks:
-  ├── placement rules (nunca todas las réplicas en el mismo tier)
-  ├── consistent hashing como base
-  └── preferir nodos con mayor ventana restante
+  ├── chunking (default 64MB)
+  ├── SHA-256 per chunk
+  ├── tier-based compression (zstd)
+  ├── tier-based erasure coding (Reed-Solomon)
   │
   ▼
-grpc_client.transfer_chunk() → nodos destino
+chunk placement
+  ├── never place all replicas on same tier
+  ├── consistent hashing baseline
+  └── prefer nodes with larger remaining window
   │
   ▼
-Raft.apply(PutChunkMap) → BlockMap replicado en quórum
+grpc_client.transfer_chunk() -> destination nodes
+  │
+  ▼
+Raft.apply(PutChunkMap) -> BlockMap replicated in quorum
   │
   ▼
 200 OK { etag, tier, replicas, ... }
@@ -183,78 +165,90 @@ Raft.apply(PutChunkMap) → BlockMap replicado en quórum
 
 ---
 
-## Descubrimiento y membresía
+## Discovery and membership
 
-```
-Arranque del agente
-        │
-        ├──► mdns: anuncia _all4one._tcp.local
-        │         escucha anuncios de otros nodos
-        │         al descubrir → notifica gossip via mpsc
-        │
-        └──► seeds: conecta a IPs fijas de la config
-                    solicita GetClusterState via gRPC
-                    notifica gossip via mpsc
-
-gossip (SWIM):
-  • Heartbeat UDP cada 10 segundos
-  • Indirect probing con K=3 nodos si no responde directo
-  • SUSPECTED tras 30s sin respuesta
-  • OFFLINE tras 60s en SUSPECTED
-  • Piggybacking: recursos actuales en cada heartbeat
-  • Publica MembershipEvent via tokio::broadcast
-    └──► scheduler suscrito: reintenta jobs en cola
-    └──► storage suscrito: re-replica chunks de nodos caídos
-```
+- On startup, each node announces itself via mDNS and probes configured seeds.
+- Gossip (SWIM) sends heartbeats and indirect probes for failure detection.
+- Membership updates are broadcast through `tokio::broadcast`.
+- Scheduler and storage subscribe to membership events for retry/rebalance logic.
 
 ---
 
-## Seguridad por fase
+## Security by phase
 
-```
-Fase 1 (dev)
-  • mode = "dev" en agent.toml
-  • shared_secret en header X-All4One-Secret (REST) y metadata gRPC
-  • Sin TLS — comunicaciones en texto plano
-  • Aviso explícito en arranque
-
-Fase 2+ (producción)
-  • CA Ed25519 interna del clúster
-  • mTLS en todas las conexiones gRPC entre agentes
-  • Enrolamiento con token de un solo uso (TTL 1 hora)
-  • CRL replicada en Raft — revocación inmediata
-  • Renovación automática de certificados (7 días antes de expirar)
-  • Cifrado en reposo opcional (AES-256-GCM con HKDF del certificado)
-```
+- **Phase 1 (dev)**:
+  shared secret (`X-All4One-Secret`) and plaintext transport.
+- **Phase 2+ (production)**:
+  internal Ed25519 CA, mTLS on inter-node gRPC, one-time enrollment tokens,
+  Raft-replicated CRL for immediate revocation, and certificate rotation.
 
 ---
 
-## Límites operativos clave
+## Operational limits (key defaults)
 
-| Parámetro                            | Valor              |
-|--------------------------------------|--------------------|
-| Timeout conexión entre nodos         | 5 segundos         |
-| Timeout respuesta LaunchJob          | 10 segundos        |
-| Timeout transferencia chunk (64MB)   | 60 segundos        |
-| Heartbeat SWIM                       | cada 10 segundos   |
-| SUSPECTED tras                       | 30 segundos        |
-| OFFLINE tras                         | 60 segundos en SUSPECTED |
-| Output máximo capturado por job      | 10 MB (truncado)   |
-| Tamaño máximo JobSpec YAML           | 1 MB               |
-| Nodos máximos en ClusterState        | 500                |
-| Tokens de enrolamiento simultáneos   | 100                |
-| Rate limit endpoint Join             | 5 intentos/IP/hora |
-| Tamaño de chunk default              | 64 MB              |
-| Tamaño de chunk mínimo               | 1 MB               |
-| Tamaño de chunk máximo               | 512 MB             |
+| Parameter | Value |
+|-----------|-------|
+| Node connect timeout | 5 seconds |
+| LaunchJob timeout | 10 seconds |
+| Chunk transfer timeout (64MB) | 60 seconds |
+| SWIM heartbeat | every 10 seconds |
+| SUSPECTED after | 30 seconds |
+| OFFLINE after | 60 seconds in SUSPECTED |
+| Max job output captured | 10 MB |
+| Max JobSpec size | 1 MB |
+| Max nodes in ClusterState | 500 |
+| Default chunk size | 64 MB |
 
 ---
 
-## Referencias
+## Cluster monitoring and visualization
 
-- [Módulos del agente en detalle](agent.md)
-- [Protocolos de red y puertos](networking.md)
-- [Algoritmo de scheduling](scheduler.md)
-- [Almacenamiento distribuido](storage.md)
+### Integrated web dashboard
+
+Each node exposes an interactive dashboard at `GET /` with:
+
+- Local node info (id, tier, uptime, roles)
+- Cluster health (total, online, offline nodes)
+- Distributed memory state (Raft leader and synchronization)
+- Storage health (data directory access, object count, available space)
+- Cluster node list (online/offline and endpoints)
+
+The dashboard auto-refreshes every 5 seconds.
+
+### Diagnostic endpoints
+
+- `GET /v1/cluster/status` - basic Raft consensus status
+- `GET /v1/cluster/diagnostics` - full diagnostics and health checks
+- `GET /health` - basic node health
+- `GET /metrics` - Prometheus-friendly metrics
+
+### Shared-folder checks
+
+Storage diagnostics verify:
+
+- data directory accessibility
+- available free space
+- object/chunk counters
+
+Access failures are reported via `/v1/cluster/diagnostics`.
+
+### Distributed-memory checks
+
+Raft diagnostics verify:
+
+- leader presence
+- consensus synchronization
+- quorum availability
+
+Status is exposed in `distributed_state.cluster_synchronized`.
+
+---
+
+## References
+
+- [Agent modules in detail](agent.md)
+- [Network protocols and ports](networking.md)
+- [Scheduling algorithm](scheduler.md)
+- [Distributed storage](storage.md)
 - [Lifecycle engine](lifecycle.md)
-- [IA e inferencia](ai-inference.md)
+- [AI and inference](ai-inference.md)

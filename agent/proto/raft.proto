@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package all4one.raft.v1;
+
+// Generic envelope for Raft consensus messages.
+// Each payload is a JSON-serialized openraft request/response.
+message RaftMessage {
+    bytes payload = 1;
+}
+
+service RaftService {
+    rpc AppendEntries(RaftMessage) returns (RaftMessage);
+    rpc Vote(RaftMessage)          returns (RaftMessage);
+    rpc InstallSnapshot(RaftMessage) returns (RaftMessage);
+}

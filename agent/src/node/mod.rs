@@ -26,6 +26,7 @@ pub fn profile(config: &Config, id: NodeId) -> NodeProfile {
     let cpu_cores = std::thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(1);
+    let memory_mb = detect_memory_mb();
 
     NodeProfile {
         id,
@@ -34,7 +35,7 @@ pub fn profile(config: &Config, id: NodeId) -> NodeProfile {
         quorum_participant: config.node.quorum_participant,
         resources: NodeResources {
             cpu_cores,
-            memory_mb: 1024,
+            memory_mb,
             disk_mb: None,
         },
         capabilities: NodeCapabilities {
@@ -43,8 +44,37 @@ pub fn profile(config: &Config, id: NodeId) -> NodeProfile {
             java: config.capabilities.java.clone(),
             wasm: config.capabilities.wasm,
             gpu_enabled: config.capabilities.gpu_enabled,
+            storage_node: config.roles.storage,
         },
     }
+}
+
+fn detect_memory_mb() -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(raw) = fs::read_to_string("/proc/meminfo") {
+            // Prefer MemAvailable; fallback to MemTotal if unavailable.
+            for key in ["MemAvailable:", "MemTotal:"] {
+                if let Some(value) = parse_meminfo_kb(&raw, key) {
+                    let mb = value / 1024;
+                    if mb > 0 {
+                        return mb as u32;
+                    }
+                }
+            }
+        }
+    }
+
+    // Conservative fallback for non-linux environments.
+    1024
+}
+
+#[cfg(target_os = "linux")]
+fn parse_meminfo_kb(raw: &str, key: &str) -> Option<u64> {
+    raw.lines()
+        .find(|line| line.starts_with(key))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|n| n.parse::<u64>().ok())
 }
 
 #[cfg(test)]

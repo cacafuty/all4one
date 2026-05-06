@@ -1,21 +1,24 @@
-# Primeros pasos
+# Getting Started
 
-Esta guía lleva desde cero hasta un clúster funcional de dos nodos con el primer
-job ejecutándose. Cubre Fase 1 (sin storage, sin Raft, sin mTLS).
+This guide takes you from zero to a functional cluster and your first successful job.
+It covers Phase 1 (no distributed storage, no Raft, no mTLS).
 
-**Tiempo estimado**: 15–20 minutos.
+**All4One works from a single node.** Start on one machine, then scale from 1 to N
+nodes when you need more capacity and resilience.
 
-**Qué necesitas**:
-- Dos máquinas en la misma red local (o una sola para empezar)
-- Linux, macOS o WSL2 en ambas
-- Docker instalado en al menos una de ellas
+**Estimated time**: 10-20 minutes.
+
+**Requirements**:
+- One machine (Linux, macOS, or WSL2)
+- Docker installed if you want to run Docker jobs
+- Optional: additional machines on the same network for multi-node scaling
 
 ---
 
-## Opcion: laboratorio local con Docker Compose
+## Option: local lab with Docker Compose
 
-Si quieres validar rapidamente el arranque multi-nodo de Fase 1 en una sola maquina,
-puedes usar el laboratorio local en `deploy/compose/`.
+If you want to validate a multi-node Phase 1 startup on a single machine, use the
+local lab under `deploy/compose/`:
 
 ```bash
 cd deploy/compose
@@ -24,27 +27,74 @@ docker compose ps
 docker compose logs -f agent-a
 ```
 
-Este laboratorio no reemplaza las pruebas finales en hardware real, pero sirve para:
+This lab is for fast iteration, not a replacement for real hardware validation.
+It helps you:
 
-- Verificar que el binario del agente Rust arranca en multiples nodos.
-- Probar configuraciones `agent.toml` por nodo sin preparar varias maquinas.
-- Tener una base rapida para iterar antes de pruebas de red reales.
+- Verify the Rust agent binary starts correctly in multiple nodes.
+- Test per-node `agent.toml` variants quickly.
+- Iterate before network-level testing.
+
+If you want the same scenario using GitHub Release binaries instead of local build:
+
+```bash
+cd deploy/compose
+VERSION=0.1.5 GH_REPO=cacafuty/all4one docker compose -f docker-compose.release.yml up --build -d
+docker compose -f docker-compose.release.yml ps
+docker compose -f docker-compose.release.yml logs -f agent-a
+```
+
+That flow downloads `all4one-agent` during image build and starts the same three
+nodes (`agent-a`, `agent-b`, `agent-c`) with configs from `deploy/compose/configs/`.
 
 ---
 
-## Paso 1: instalar el agente
+## Step 1: install the agent
 
-Los binarios pre-compilados están disponibles en la página de
-[GitHub Releases](https://github.com/all4one/all4one/releases).
-Cada release incluye archivos para las cuatro plataformas objetivo y un
-`checksums.sha256` para verificar la integridad.
+### Recommended option: autoinstall (download latest release and start)
 
-En ambas máquinas:
+The script `scripts/autoinstall.sh` downloads the latest release from GitHub,
+verifies checksums, creates a minimal config (if missing), and starts the agent.
+If the latest public release is a prerelease, `latest` will pick it.
 
 ```bash
-# Reemplaza X.Y.Z con la versión deseada (p.ej. 0.2.0)
+curl -fsSL https://raw.githubusercontent.com/cacafuty/all4one/main/scripts/autoinstall.sh -o autoinstall
+chmod +x autoinstall
+./autoinstall
+```
+
+Common options:
+
+```bash
+./autoinstall --version 0.1.5 --shared-secret my-secret
+./autoinstall --seeds 192.168.1.100:7947,192.168.1.101:7947
+./autoinstall --no-start
+```
+
+If the repository or release requires authentication, use a GitHub token:
+
+```bash
+GITHUB_TOKEN=ghp_xxx ./autoinstall --version 0.1.5
+# equivalent
+./autoinstall --version 0.1.5 --github-token ghp_xxx
+```
+
+Prepared for future certificate-based join:
+
+```bash
+./autoinstall --join-cert /etc/all4one/node.crt --join-endpoint 192.168.1.100:7947 --no-start
+```
+
+In Phase 1, these join parameters are stored as reference in `agent.toml`.
+
+Prebuilt binaries are available on
+[GitHub Releases](https://github.com/cacafuty/all4one/releases), including a
+`checksums.sha256` file.
+
+```bash
+# Replace X.Y.Z with the version (for example: 0.2.0)
 VERSION=X.Y.Z
-BASE=https://github.com/all4one/all4one/releases/download/v${VERSION}
+GH_REPO=cacafuty/all4one
+BASE=https://github.com/${GH_REPO}/releases/download/v${VERSION}
 
 # Linux x86_64
 curl -sSL ${BASE}/all4one-agent-linux-x86_64.tar.gz | tar xz -C /usr/local/bin
@@ -59,11 +109,11 @@ curl -sSL ${BASE}/all4one-agent-macos-arm64.tar.gz | tar xz -C /usr/local/bin
 chmod +x /usr/local/bin/all4one-agent
 
 # Windows x86_64 (PowerShell)
-# Descarga all4one-agent-windows-x86_64.zip desde la página de releases
-# y extrae all4one-agent.exe al directorio deseado.
+# Download all4one-agent-windows-x86_64.zip from releases
+# and extract all4one-agent.exe to your target directory.
 ```
 
-Para verificar la integridad antes de ejecutar:
+Verify integrity before running:
 
 ```bash
 curl -sSL ${BASE}/checksums.sha256 | sha256sum --check --ignore-missing
@@ -71,7 +121,7 @@ curl -sSL ${BASE}/checksums.sha256 | sha256sum --check --ignore-missing
 
 ---
 
-## Paso 2: configurar el primer nodo (Nodo A)
+## Step 2: configure your node
 
 ```bash
 mkdir -p /etc/all4one /var/lib/all4one
@@ -86,7 +136,7 @@ data_dir = "/var/lib/all4one"
 [roles]
 scheduler = true
 executor = true
-storage = false   # storage se activa en Fase 2
+storage = false   # Storage is enabled in Phase 2
 
 [network]
 bind_address = "0.0.0.0"
@@ -99,7 +149,7 @@ seeds = []
 
 [security]
 mode = "dev"
-shared_secret = "mi-secreto-de-prueba"
+shared_secret = "my-test-secret"
 
 [executor]
 max_concurrent_jobs = 8
@@ -119,26 +169,27 @@ EOF
 all4one-agent start --config /etc/all4one/agent.toml
 ```
 
-Deberías ver:
+Expected output:
+
 ```
 INFO Starting All4One agent v0.1.0
 INFO Node ID: f47ac10b-58cc-4372-a567-0e02b2c3d479
 INFO Tier: 0 | Roles: scheduler+executor
-⚠️  MODO DESARROLLO ACTIVO — no usar en producción
+WARN DEVELOPMENT MODE ACTIVE - do not use in production
 INFO mDNS: announcing _all4one._tcp.local
 INFO REST API listening on 0.0.0.0:7946
 INFO gRPC listening on 0.0.0.0:7947
 INFO SWIM gossip listening on UDP 0.0.0.0:7947
 ```
 
-Anota la **IP del Nodo A** (`ip addr show` o `ifconfig`). La usarás en el Nodo B.
+With a single node, you can send jobs directly to `localhost:7946`.
+If you plan to add nodes, note this machine IP (`ip addr show` or `ifconfig`).
 
 ---
 
-## Paso 3: verificar que el Nodo A responde
+## Step 3: verify the node is healthy
 
 ```bash
-# En otra terminal, en el Nodo A
 curl -s http://localhost:7946/health | python3 -m json.tool
 ```
 
@@ -152,13 +203,18 @@ curl -s http://localhost:7946/health | python3 -m json.tool
 }
 ```
 
-`quorum_healthy: false` es normal en Fase 1 sin Raft.
+`quorum_healthy: false` is expected in Phase 1 without Raft.
+
+If you are running one node only, jump directly to **Step 6**.
 
 ---
 
-## Paso 4: configurar el segundo nodo (Nodo B)
+## Step 4: add a second node (optional)
 
-En el Nodo B, reemplaza `192.168.1.100` con la IP real del Nodo A:
+This step is optional. All4One is fully functional with one node.
+Use this step to distribute load and increase resilience.
+
+On the second machine, replace `192.168.1.100` with your first node IP:
 
 ```bash
 mkdir -p /etc/all4one /var/lib/all4one
@@ -166,12 +222,12 @@ mkdir -p /etc/all4one /var/lib/all4one
 cat > /etc/all4one/agent.toml << 'EOF'
 [node]
 tier = 1
-availability = "cron:0 0-23 * * *"   # siempre disponible para esta prueba
+availability = "cron:0 0-23 * * *"
 quorum_participant = true
 data_dir = "/var/lib/all4one"
 
 [roles]
-scheduler = false   # solo ejecuta
+scheduler = false
 executor = true
 storage = false
 
@@ -182,11 +238,11 @@ rest_port = 7946
 
 [discovery]
 mdns = true
-seeds = ["192.168.1.100:7947"]   # ← IP del Nodo A
+seeds = ["192.168.1.100:7947"]
 
 [security]
 mode = "dev"
-shared_secret = "mi-secreto-de-prueba"
+shared_secret = "my-test-secret"
 
 [executor]
 max_concurrent_jobs = 4
@@ -196,7 +252,7 @@ cgroups_enabled = true
 [capabilities]
 docker = true
 python = "/usr/bin/python3"
-wasm = false   # si no hay wasmtime disponible
+wasm = false
 
 [logging]
 level = "info"
@@ -208,100 +264,63 @@ all4one-agent start --config /etc/all4one/agent.toml
 
 ---
 
-## Paso 5: verificar que los nodos se descubren
+## Step 5: verify node discovery
 
-En el Nodo A, el log debería mostrar:
+Only applies when running multiple nodes.
+
+On the first node, logs should include:
+
 ```
 INFO gossip: NodeJoined b2c3d4e5-f6a7-8901-bcde-f01234567890 (192.168.1.101, Tier 1)
 ```
 
-Confirmar via REST:
-```bash
-curl -s -H "X-All4One-Secret: mi-secreto-de-prueba" \
-  http://localhost:7946/v1/nodes | python3 -m json.tool
-```
+Check through REST:
 
-```json
-{
-  "nodes": [
-    { "profile": { "id": "f47ac10b-...", "tier": 0 }, "status": "online", ... },
-    { "profile": { "id": "b2c3d4e5-...", "tier": 1 }, "status": "online", ... }
-  ],
-  "total": 2,
-  "online": 2,
-  "offline": 0
-}
+```bash
+curl -s -H "X-All4One-Secret: my-test-secret" \
+  http://localhost:7946/v1/nodes | python3 -m json.tool
 ```
 
 ---
 
-## Paso 6: enviar el primer job
+## Step 6: submit your first job
 
-Desde cualquier máquina que tenga acceso a la red (puede ser tu portátil personal):
+From any machine that can reach the node:
 
 ```bash
-# Job simple: Python en cualquier nodo
 curl -s -X POST http://192.168.1.100:7946/v1/jobs \
   -H "Content-Type: application/yaml" \
-  -H "X-All4One-Secret: mi-secreto-de-prueba" \
+  -H "X-All4One-Secret: my-test-secret" \
   -d '
 runtime: python
 source: "volatile://scripts/hello.py"
-command: ["-c", "import time; [print(f\"Línea {i}\", flush=True) or time.sleep(0.5) for i in range(10)]"]
+command: ["-c", "import time; [print(f\"Line {i}\", flush=True) or time.sleep(0.5) for i in range(10)]"]
 resources:
   cpu_cores: 1
   memory_mb: 128
 '
 ```
 
-```json
-{
-  "job_id": "c3d4e5f6-a7b8-9012-cdef-012345678901",
-  "status": "scheduled",
-  "assigned_to": "b2c3d4e5-f6a7-8901-bcde-f01234567890",
-  "created_at": "2026-04-08T10:30:00Z",
-  ...
-}
-```
-
 ---
 
-## Paso 7: ver el output en tiempo real
+## Step 7: stream job output
 
 ```bash
-# Streaming SSE del output del job
 curl -s -N \
   -H "Accept: text/event-stream" \
-  -H "X-All4One-Secret: mi-secreto-de-prueba" \
+  -H "X-All4One-Secret: my-test-secret" \
   http://192.168.1.100:7946/v1/jobs/c3d4e5f6-a7b8-9012-cdef-012345678901/output/stream
 ```
 
-```
-event: stdout
-data: {"line": "Línea 0"}
-
-event: stdout
-data: {"line": "Línea 1"}
-
-event: stdout
-data: {"line": "Línea 2"}
-...
-
-event: completed
-data: {"exit_code": 0}
-```
-
 ---
 
-## Paso 8: job Docker con constraints de capabilities
-
-Este job solo puede correr en nodos con Docker instalado:
+## Step 8: Docker job with capability constraints
 
 ```bash
 cat > /tmp/docker-job.yaml << 'EOF'
 runtime: docker
 source: "alpine:3.19"
-command: ["sh", "-c", "echo 'Corriendo en Docker!' && uname -a && cat /proc/cpuinfo | grep 'model name' | head -1"]
+command: ["sh", "-c", "echo 'Running in Docker!' && uname -a && cat /proc/cpuinfo | grep 'model name' | head -1"]
 resources:
   cpu_cores: 1
   memory_mb: 256
@@ -313,38 +332,37 @@ EOF
 
 curl -s -X POST http://192.168.1.100:7946/v1/jobs \
   -H "Content-Type: application/yaml" \
-  -H "X-All4One-Secret: mi-secreto-de-prueba" \
+  -H "X-All4One-Secret: my-test-secret" \
   --data-binary @/tmp/docker-job.yaml
 ```
 
 ---
 
-## Siguientes pasos
+## Next steps
 
-- Añadir más nodos siguiendo [Configuración de un nodo](node-setup.md).
-- Activar storage distribuido: ver [Fase 2](../phases/phase-2.md).
-- Especificación completa del Job: ver [Job Spec](../api/job-spec.md).
-- API REST completa: ver [REST API](../api/rest-api.md).
-- Todos los campos de configuración: ver [Referencia agent.toml](../api/config-reference.md).
+- Add more nodes via [Node setup](node-setup.md).
+- Enable distributed storage in [Phase 2](../phases/phase-2.md).
+- Full job schema: [Job Spec](../api/job-spec.md).
+- Full API details: [REST API](../api/rest-api.md).
+- Configuration fields: [agent.toml reference](../api/config-reference.md).
 
 ---
 
-## Diagnóstico de problemas comunes
+## Troubleshooting
 
-**Los nodos no se descubren via mDNS**:
-- Verifica que el firewall permite tráfico UDP multicast.
-- En algunas redes corporativas, mDNS está bloqueado. Usa `seeds` como alternativa.
-- Comprueba que los puertos 7946 y 7947 no están en uso: `ss -tlnp | grep 794`.
+**Nodes are not discovered via mDNS**:
+- Ensure firewall allows UDP multicast.
+- Some corporate networks block mDNS; use `seeds`.
+- Check that ports 7946/7947 are free.
 
-**El job queda en `queued` para siempre**:
-- El scheduler no encuentra nodos que cumplan las constraints.
-- Verifica con `GET /v1/nodes` que hay nodos online con las capabilities requeridas.
-- Prueba con un job sin constraints para confirmar que el scheduler funciona.
+**Jobs remain in `queued`**:
+- Scheduler found no nodes matching constraints.
+- Check `GET /v1/nodes` for online nodes and capabilities.
+- Retry with a job without constraints.
 
-**`401 Unauthorized` en todas las llamadas**:
-- El `shared_secret` en el header no coincide con el de `agent.toml`.
-- Verifica que el header es `X-All4One-Secret` (no `X-All4One-Secret-Key` ni similar).
+**`401 Unauthorized` on all calls**:
+- `shared_secret` does not match `agent.toml`.
+- Header must be `X-All4One-Secret`.
 
-**Docker: `permission denied` al acceder al socket**:
-- El usuario que corre el agente debe estar en el grupo `docker`.
-- En Linux: `usermod -aG docker all4one && newgrp docker`.
+**Docker socket permission denied**:
+- The user running the agent must be in the `docker` group.

@@ -1,127 +1,127 @@
-# ADR-002: Sin nodo central de orquestación
+# ADR-002: No central orchestration node
 
-**Estado**: Aceptado
-**Fecha**: 2026-04-08
-
----
-
-## Contexto
-
-All4One se vende a empresas con hardware existente heterogéneo — desde Raspberry
-Pi hasta servidores rack. El cliente típico no quiere designar ni mantener un
-"servidor maestro" dedicado. Muchos clientes tienen hardware con disponibilidad
-temporal (portátiles que se apagan, PCs de oficina fuera del horario laboral).
-
-La pregunta de diseño fundamental: ¿quién coordina el clúster?
+**Status**: Accepted
+**Date**: 2026-04-08
 
 ---
 
-## Decisión
+## Context
 
-**No existe un nodo obligatorio de orquestación.** Cualquier nodo puede recibir
-jobs y coordinar. El clúster funciona con lo que haya disponible en cada momento.
-El consenso (Raft) es embebido en cada agente y los nodos que participan en quórum
-son los que tengan `quorum_participant = true` — no hay un nodo especial para ello.
+All4One is sold to companies with heterogeneous existing hardware — from Raspberry
+Pi to rack servers. The typical customer does not want to designate or maintain a
+dedicated "master server". Many customers have hardware with partial availability
+(laptops that shut down, office PCs outside business hours).
+
+The fundamental design question: who coordinates the cluster?
 
 ---
 
-## Razones
+## Decision
 
-### Clúster mínimo funcional de un solo nodo
+**No mandatory orchestration node exists.** Any node can receive jobs and
+coordinate. The cluster works with whatever is available at any given moment.
+Consensus (Raft) is embedded in each agent, and the nodes that participate in quorum
+are those with `quorum_participant = true` — there is no special node for this.
 
-Con un nodo central obligatorio, el cliente necesita al menos dos máquinas:
-el maestro y un worker. Sin nodo central, un desarrollador puede instalar el
-agente en su portátil y tener un clúster funcional para desarrollo local.
+---
 
-En ventas: el demo de "instala esto y en 5 minutos tienes tu clúster" solo es
-posible sin nodo central.
+## Reasons
 
-### Ausencia de SPOF (Single Point of Failure)
+### Minimum functional cluster of a single node
 
-Si el nodo central cae, el sistema entero se detiene. En el modelo distribuido:
-- Mientras haya quórum (mayoría de nodos `quorum_participant=true` online),
-  el clúster opera normalmente.
-- Si se pierde el quórum, el clúster pasa a modo degradado (sin escrituras en
-  Raft, pero los jobs ya en ejecución continúan y los schedulers sin Raft
-  siguen colocando jobs best-effort).
+With a mandatory central node, the customer needs at least two machines:
+the master and a worker. Without a central node, a developer can install the
+agent on their laptop and have a functional cluster for local development.
 
-### La disponibilidad temporal de nodos es un parámetro de diseño
+In sales: the "install this and in 5 minutes you have your cluster" demo is only
+possible without a central node.
 
-Los nodos Tier 1 y Tier 2 tienen disponibilidad parcial por diseño. El modelo
-con nodo central tendría que tratar la ausencia de nodos como casos de error
-a gestionar. En el modelo distribuido, la disponibilidad temporal es una
-característica que el scheduler conoce y sobre la que planifica:
+### No SPOF (Single Point of Failure)
+
+If the central node goes down, the entire system stops. In the distributed model:
+- While there is quorum (majority of `quorum_participant=true` nodes online),
+  the cluster operates normally.
+- If quorum is lost, the cluster enters degraded mode (no Raft writes,
+  but already running jobs continue and schedulers without Raft
+  keep placing jobs best-effort).
+
+### Temporal node availability is a design parameter
+
+Tier 1 and Tier 2 nodes have partial availability by design. The central-node
+model would need to treat node absence as error cases to handle.
+In the distributed model, temporal availability is a feature the scheduler
+knows about and plans around:
 
 ```
 availability = "cron:0 9-18 * * 1-5"
 ```
 
-El scheduler filtra este nodo fuera de la ventana 18:00–09:00 en lugar de
-intentar conectar a un nodo que sabe que no está disponible.
+The scheduler filters this node out of the 18:00–09:00 window instead of
+attempting to connect to a node it knows is unavailable.
 
 ---
 
-## Alternativas descartadas
+## Rejected alternatives
 
-### Arquitectura maestro-worker (Kubernetes-style)
+### Master-worker architecture (Kubernetes-style)
 
-**Descartada por**:
+**Rejected because**:
 
-1. **Dependencia de infraestructura**: el maestro debe ser un servidor siempre
-   disponible. Muchos clientes target de Starter/Business no tienen ese servidor
-   o no quieren gestionarlo.
+1. **Infrastructure dependency**: the master must be an always-available server.
+   Many Starter/Business target customers don't have such a server
+   or don't want to manage it.
 
-2. **SPOF**: la caída del maestro detiene el scheduling. En K8s, el control plane
-   es el punto crítico — alta disponibilidad del maestro requiere 3+ nodos
-   dedicados (etcd cluster + API server redundante).
+2. **SPOF**: the master going down stops scheduling. In K8s, the control plane
+   is the critical point — master high availability requires 3+ dedicated nodes
+   (etcd cluster + redundant API server).
 
-3. **Overhead operativo**: los clientes compran All4One para no tener que gestionar
-   infraestructura. Un maestro separado es infraestructura a gestionar.
+3. **Operational overhead**: customers buy All4One to avoid managing
+   infrastructure. A separate master is infrastructure to manage.
 
-### Coordinador externo (ZooKeeper / etcd)
+### External coordinator (ZooKeeper / etcd)
 
-**Descartado por**:
+**Rejected because**:
 
-1. **Dependencia externa**: requiere instalar y mantener ZooKeeper o etcd
-   por separado. Contradice el principio de "un único binario sin dependencias".
+1. **External dependency**: requires installing and maintaining ZooKeeper or etcd
+   separately. Contradicts the principle of "a single binary with no dependencies".
 
-2. **Licencia etcd**: etcd usa Apache 2.0, pero requiere instalación y gestión
-   separada. Añade una pieza de infraestructura que puede fallar independientemente.
+2. **etcd license**: etcd uses Apache 2.0, but requires separate installation and
+   management. Adds an infrastructure piece that can fail independently.
 
-3. **Latencia de coordinación**: cada operación que requiera consenso (RegisterJob,
-   PutChunkMap) necesita una llamada de red extra al coordinador externo. Con Raft
-   embebido, la escritura en el log es local al nodo líder.
+3. **Coordination latency**: every operation requiring consensus (RegisterJob,
+   PutChunkMap) needs an extra network call to the external coordinator. With
+   embedded Raft, writing to the log is local to the leader node.
 
 ---
 
-## Consecuencias aceptadas
+## Accepted trade-offs
 
-### Mayor complejidad en cada agente
+### Greater complexity per agent
 
-Cada agente implementa scheduling, gossip y consenso. Esto hace el agente más
-complejo que un simple worker que solo ejecuta órdenes del maestro.
+Each agent implements scheduling, gossip, and consensus. This makes the agent
+more complex than a simple worker that only executes master commands.
 
-**Mitigación**: los módulos son independientes con interfaces bien definidas.
-Un nodo Android solo activa `storage` — no implementa scheduler ni Raft.
+**Mitigation**: modules are independent with well-defined interfaces.
+An Android node only activates `storage` — it does not implement scheduler or Raft.
 
-### Debugging más complejo
+### More complex debugging
 
-Sin logs centralizados, correlacionar eventos entre nodos requiere:
-- IDs de request consistentes (`X-Request-Id` en REST, `correlation_id` en gRPC).
-- Timestamps sincronizados (NTP obligatorio en producción).
-- Agregación de logs externos (Loki, Elasticsearch) para producción.
+Without centralized logs, correlating events across nodes requires:
+- Consistent request IDs (`X-Request-Id` in REST, `correlation_id` in gRPC).
+- Synchronized timestamps (NTP required in production).
+- External log aggregation (Loki, Elasticsearch) for production.
 
-**Mitigación**: tracing estructurado en JSON con `request_id` permite correlación
-post-hoc. La UI web de administración (Fase 5) agrega métricas de todos los nodos.
+**Mitigation**: structured JSON tracing with `request_id` enables post-hoc
+correlation. The admin web UI (Phase 3) aggregates metrics from all nodes.
 
-### Race condition de scheduling en Fase 1
+### Scheduling race condition in Phase 1
 
-Sin Raft, si el mismo job con `id` explícito llega a dos schedulers
-simultáneamente, puede ejecutarse dos veces.
+Without Raft, if the same job with an explicit `id` arrives at two schedulers
+simultaneously, it may execute twice.
 
-**Mitigación en Fase 1**: los jobs deben ser idempotentes. Si el `id` ya existe
-en el estado local, se devuelve el estado actual sin relanzar.
+**Phase 1 mitigation**: jobs must be idempotent. If the `id` already exists
+in local state, the current state is returned without relaunching.
 
-**Solución definitiva en Fase 2**: `RaftCommand::RegisterJob` garantiza que el
-job se registra exactamente una vez en el quórum. El segundo intento recibe
-un error de clave duplicada.
+**Definitive solution in Phase 2**: `RaftCommand::RegisterJob` guarantees the
+job is registered exactly once in the quorum. The second attempt receives
+a duplicate key error.

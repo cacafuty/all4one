@@ -24,6 +24,8 @@ pub struct NodeCapabilities {
     pub java: Option<String>,
     pub wasm: bool,
     pub gpu_enabled: bool,
+    #[serde(default)]
+    pub storage_node: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +80,7 @@ mod tests {
                         java: None,
                         wasm: true,
                         gpu_enabled: false,
+                        storage_node: false,
                     },
                 },
                 status: NodeStatus::Online,

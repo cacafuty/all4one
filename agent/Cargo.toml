@@ -17,12 +17,24 @@ uuid = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
-tonic = { version = "0.12", features = ["transport"] }
-prost = "0.13"
+tonic = { version = "0.14.5", features = ["transport"] }
+tonic-prost = "0.14.5"
+prost = "0.14"
+libc = "0.2"
+openraft = { version = "0.9", features = ["serde", "storage-v2"] }
+sled = "0.34"
+rcgen = { version = "0.13", features = ["pem"] }
+rustls = { version = "0.23", features = ["std"] }
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
+reed-solomon = "0.2"
+zstd = "0.13"
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14.5"
 protoc-bin-vendored = "3"

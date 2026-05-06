@@ -1,0 +1,13 @@
+# 04 — Redis cache server version check
+runtime: docker
+source: redis:7-alpine
+command:
+  - redis-server
+  - --version
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 1
+  requires_capabilities:
+    docker: true

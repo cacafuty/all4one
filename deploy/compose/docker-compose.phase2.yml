@@ -1,0 +1,70 @@
+services:
+  agent-a:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: all4one-phase2-agent-a
+    command: ["start", "--config", "/configs/agent-a-phase2.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - phase2_agent_a_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "7946:7946"
+      - "7947:7947"
+    networks:
+      - all4one_phase2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-b:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: all4one-phase2-agent-b
+    command: ["start", "--config", "/configs/agent-b-phase2.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - phase2_agent_b_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8946:7946"
+      - "8947:7947"
+    depends_on:
+      - agent-a
+    networks:
+      - all4one_phase2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-c:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: all4one-phase2-agent-c
+    command: ["start", "--config", "/configs/agent-c-phase2.toml"]
+    volumes:
+      - ./configs:/configs:ro
+      - phase2_agent_c_data:/var/lib/all4one
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9946:7946"
+      - "9947:7947"
+    depends_on:
+      - agent-a
+    networks:
+      - all4one_phase2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+# Each agent gets its own isolated named volume — no shared storage,
+# mimicking three truly independent machines. Replication happens
+# exclusively over gRPC TransferChunk between the containers.
+volumes:
+  phase2_agent_a_data:
+  phase2_agent_b_data:
+  phase2_agent_c_data:
+
+networks:
+  all4one_phase2:
+    driver: bridge

@@ -1,0 +1,13 @@
+# 02 — PostgreSQL database version check
+runtime: docker
+source: postgres:16-alpine
+command:
+  - postgres
+  - --version
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 0
+  requires_capabilities:
+    docker: true

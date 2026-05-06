@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All4One Operations UI</title>
+    <style>
+        :root {
+            --bg-0: #fff8ef;
+            --bg-1: #f5fbff;
+            --ink: #14213d;
+            --muted: #54657d;
+            --panel: rgba(255, 255, 255, 0.86);
+            --border: rgba(20, 33, 61, 0.15);
+            --ok: #1b9a59;
+            --warn: #d88c00;
+            --bad: #c83d3d;
+            --accent-a: #0b8f8c;
+            --accent-b: #ea8f2f;
+            --shadow: 0 18px 45px rgba(20, 33, 61, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "IBM Plex Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 15% 10%, rgba(11, 143, 140, 0.18), transparent 42%),
+                radial-gradient(circle at 85% 0%, rgba(234, 143, 47, 0.22), transparent 35%),
+                linear-gradient(130deg, var(--bg-0), var(--bg-1));
+        }
+
+        .shell {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 24px 18px 40px;
+        }
+
+        .hero {
+            background: linear-gradient(120deg, rgba(11, 143, 140, 0.08), rgba(234, 143, 47, 0.16));
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            padding: 18px 20px;
+            margin-bottom: 18px;
+            animation: rise 420ms ease-out;
+        }
+
+        .hero-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .brand {
+            font-family: "Rockwell", "Bookman Old Style", serif;
+            letter-spacing: 0.6px;
+            margin: 0;
+            font-size: 30px;
+            color: #11356c;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            margin: 4px 0 0;
+            font-size: 14px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .secret-input {
+            border: 1px solid var(--border);
+            background: #fff;
+            border-radius: 10px;
+            padding: 9px 11px;
+            min-width: 220px;
+            font: inherit;
+        }
+
+        .btn {
+            border: 0;
+            border-radius: 10px;
+            padding: 9px 14px;
+            cursor: pointer;
+            font-weight: 700;
+            color: #fff;
+            transition: transform 120ms ease, opacity 120ms ease;
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .btn-save {
+            background: linear-gradient(120deg, #0d8e8a, #1478ac);
+        }
+
+        .btn-refresh {
+            background: linear-gradient(120deg, #e98624, #d66b2f);
+        }
+
+        .pulse {
+            margin-top: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            border-radius: 999px;
+            padding: 6px 11px;
+            font-size: 13px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.64);
+        }
+
+        .pulse-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+            background: var(--warn);
+            box-shadow: 0 0 0 0 rgba(216, 140, 0, 0.7);
+            animation: pulse 2s infinite;
+        }
+
+        .pulse-dot.ok {
+            background: var(--ok);
+            box-shadow: 0 0 0 0 rgba(27, 154, 89, 0.7);
+        }
+
+        .pulse-dot.bad {
+            background: var(--bad);
+            box-shadow: 0 0 0 0 rgba(200, 61, 61, 0.7);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 14px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            padding: 16px;
+            animation: rise 360ms ease-out;
+        }
+
+        .span-4 { grid-column: span 4; }
+        .span-6 { grid-column: span 6; }
+        .span-8 { grid-column: span 8; }
+        .span-12 { grid-column: span 12; }
+
+        .card h2 {
+            margin: 0 0 11px;
+            font-size: 15px;
+            font-weight: 800;
+            color: #19406f;
+            letter-spacing: 0.25px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .stat {
+            border: 1px solid rgba(20, 33, 61, 0.12);
+            border-radius: 10px;
+            padding: 9px;
+            background: #fff;
+        }
+
+        .stat-k {
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .stat-v {
+            font-size: 20px;
+            font-weight: 800;
+            line-height: 1.1;
+        }
+
+        .ok { color: var(--ok); }
+        .warn { color: var(--warn); }
+        .bad { color: var(--bad); }
+
+        .node-list,
+        .job-list,
+        .timeline {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: grid;
+            gap: 9px;
+        }
+
+        .row {
+            border: 1px solid rgba(20, 33, 61, 0.11);
+            background: #fff;
+            border-radius: 10px;
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .mono {
+            font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+            font-size: 12px;
+            color: #3f4d63;
+        }
+
+        .tag {
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-weight: 700;
+            border: 1px solid rgba(20, 33, 61, 0.14);
+            background: #f7f9fc;
+            color: #28405a;
+        }
+
+        .tag.ok { background: #e9f8ef; color: #166642; border-color: #bfe8cf; }
+        .tag.warn { background: #fff4de; color: #8b5907; border-color: #f3d49d; }
+        .tag.bad { background: #ffe8e8; color: #902c2c; border-color: #edbcbc; }
+
+        .timeline .row {
+            align-items: flex-start;
+        }
+
+        .timestamp {
+            margin-top: 14px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: right;
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .error {
+            margin-top: 8px;
+            color: var(--bad);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .toolbar {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .toolbar input,
+        .toolbar select {
+            border: 1px solid var(--border);
+            background: #fff;
+            border-radius: 10px;
+            padding: 7px 9px;
+            font: inherit;
+            color: var(--ink);
+        }
+
+        .btn-link {
+            border: 1px solid rgba(20, 33, 61, 0.2);
+            background: #fff;
+            border-radius: 8px;
+            padding: 5px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            color: #19406f;
+            font-weight: 700;
+        }
+
+        .detail-box {
+            border: 1px dashed rgba(20, 33, 61, 0.2);
+            border-radius: 10px;
+            padding: 10px;
+            background: #fff;
+        }
+
+        @keyframes rise {
+            from { opacity: 0; transform: translateY(7px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+        }
+
+        @media (max-width: 1080px) {
+            .span-4, .span-6, .span-8, .span-12 { grid-column: span 12; }
+            .stats { grid-template-columns: 1fr 1fr; }
+        }
+
+        @media (max-width: 640px) {
+            .stats { grid-template-columns: 1fr; }
+            .controls { width: 100%; }
+            .secret-input { flex: 1; min-width: 0; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <div class="hero-top">
+                <div>
+                    <h1 class="brand">All4One Operations UI</h1>
+                    <p class="subtitle">Phase 3 live view for cluster, jobs, storage and distributed state.</p>
+                </div>
+                <div class="controls">
+                    <input id="secret" class="secret-input" placeholder="X-All4One-Secret (if required)" />
+                    <button class="btn btn-save" onclick="saveSecret()">Save Secret</button>
+                    <button class="btn btn-refresh" onclick="refreshData()">Refresh</button>
+                </div>
+            </div>
+            <div id="pulse" class="pulse">
+                <span class="pulse-dot"></span>
+                <span>Waiting for cluster data...</span>
+            </div>
+            <div id="error" class="error"></div>
+        </section>
+
+        <section id="content" class="grid"></section>
+    </main>
+
+    <script>
+        const appState = {
+            timeline: [],
+            maxTimeline: 24,
+            jobs: [],
+            nodes: [],
+            selectedJobId: '',
+            selectedNodeId: '',
+            filters: {
+                jobStatus: 'all',
+                jobNode: '',
+            },
+            eventSource: null,
+        };
+
+        function getHeaders() {
+            const secret = localStorage.getItem('all4one_secret') || '';
+            return secret ? { 'X-All4One-Secret': secret } : {};
+        }
+
+        function saveSecret() {
+            const value = document.getElementById('secret').value.trim();
+            localStorage.setItem('all4one_secret', value);
+            reconnectOpsEvents();
+            refreshData();
+        }
+
+        function addTimeline(message, level, at) {
+            const item = {
+                message,
+                level,
+                at: at || new Date().toLocaleTimeString(),
+            };
+            appState.timeline.unshift(item);
+            appState.timeline = appState.timeline.slice(0, appState.maxTimeline);
+        }
+
+        async function apiGet(path) {
+            const res = await fetch(path, { headers: getHeaders() });
+            if (!res.ok) {
+                throw new Error(path + ' -> HTTP ' + res.status);
+            }
+            return await res.json();
+        }
+
+        function reconnectOpsEvents() {
+            if (appState.eventSource) {
+                appState.eventSource.close();
+                appState.eventSource = null;
+            }
+
+            const secret = localStorage.getItem('all4one_secret') || '';
+            const url = secret ? '/v1/ops/events?secret=' + secret : '/v1/ops/events';
+            const es = new EventSource(url);
+            appState.eventSource = es;
+
+            es.addEventListener('ops', ev => {
+                try {
+                    const payload = JSON.parse(ev.data);
+                    const level = payload.level === 'error' ? 'bad' : (payload.level === 'warn' ? 'warn' : 'ok');
+                    addTimeline(payload.message || payload.kind || 'event', level, new Date(payload.at).toLocaleTimeString());
+                } catch {
+                    addTimeline('Malformed ops event payload', 'warn');
+                }
+            });
+
+            es.onerror = () => {
+                addTimeline('Ops event stream disconnected, waiting for reconnect...', 'warn');
+            };
+        }
+
+        async function refreshData() {
+            const errorNode = document.getElementById('error');
+            errorNode.textContent = '';
+
+            try {
+                const [diagnostics, nodes, jobs] = await Promise.all([
+                    apiGet('/v1/cluster/diagnostics'),
+                    apiGet('/v1/nodes'),
+                    apiGet('/v1/jobs'),
+                ]);
+
+                appState.nodes = nodes.nodes || [];
+                appState.jobs = jobs.jobs || [];
+                render(diagnostics, nodes, jobs);
+            } catch (err) {
+                setPulse('bad', 'Could not reach protected APIs. Check secret/header and node health.');
+                errorNode.textContent = String(err.message || err);
+                document.getElementById('content').innerHTML = '<article class="card span-12"><h2>Unavailable</h2><p class="empty">Cluster data could not be loaded.</p></article>';
+            }
+        }
+
+        function short(v) {
+            const s = String(v || '');
+            if (s.length <= 12) return s;
+            return s.slice(0, 8) + '...' + s.slice(-4);
+        }
+
+        function jobCounts(jobs) {
+            const counts = { queued: 0, running: 0, completed: 0, failed: 0, other: 0 };
+            for (const job of jobs.jobs || []) {
+                const status = String(job.status || '').toLowerCase();
+                if (counts[status] !== undefined) {
+                    counts[status] += 1;
+                } else {
+                    counts.other += 1;
+                }
+            }
+            return counts;
+        }
+
+        function statusTag(status) {
+            const s = String(status || '').toLowerCase();
+            if (s === 'online' || s === 'completed') return '<span class="tag ok">' + s + '</span>';
+            if (s === 'failed' || s === 'offline') return '<span class="tag bad">' + s + '</span>';
+            return '<span class="tag warn">' + s + '</span>';
+        }
+
+        function setPulse(level, text) {
+            const pulse = document.getElementById('pulse');
+            const dotClass = level === 'ok' ? 'pulse-dot ok' : (level === 'bad' ? 'pulse-dot bad' : 'pulse-dot');
+            pulse.innerHTML = '<span class="' + dotClass + '"></span><span>' + text + '</span>';
+        }
+
+        function rolesFromNode(node) {
+            const caps = [];
+            if (node.profile.scheduler) caps.push('scheduler');
+            if (node.profile.executor) caps.push('executor');
+            if (node.profile.storage) caps.push('storage');
+            return caps.join(', ');
+        }
+
+        function formatUptime(seconds) {
+            if (seconds < 60) return seconds + 's';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+            return Math.floor(seconds / 86400) + 'd';
+        }
+
+        function applyJobFilters(jobs) {
+            return jobs.filter(job => {
+                const statusMatch = appState.filters.jobStatus === 'all' || String(job.status).toLowerCase() === appState.filters.jobStatus;
+                const nodeMatch = !appState.filters.jobNode || String(job.assigned_to) === appState.filters.jobNode;
+                return statusMatch && nodeMatch;
+            });
+        }
+
+        function getSelectedNode() {
+            return appState.nodes.find(n => String(n.profile.id) === String(appState.selectedNodeId));
+        }
+
+        function getSelectedJob() {
+            return appState.jobs.find(j => String(j.job_id) === String(appState.selectedJobId));
+        }
+
+        function selectNode(id) {
+            appState.selectedNodeId = id;
+            refreshData();
+        }
+
+        function selectJob(id) {
+            appState.selectedJobId = id;
+            refreshData();
+        }
+
+        function setJobStatusFilter(value) {
+            appState.filters.jobStatus = value;
+            refreshData();
+        }
+
+        function setJobNodeFilter(value) {
+            appState.filters.jobNode = value;
+            refreshData();
+        }
+
+        function render(d, nodes, jobs) {
+            const counts = jobCounts(jobs);
+            const syncOk = !!d.distributed_state.cluster_synchronized;
+            const quorumOk = !!d.cluster_info.quorum_healthy;
+            const online = Number(nodes.online || 0);
+            const total = Number(nodes.total || 0);
+            const objectCount = d.storage_health && d.storage_health.object_count != null
+                ? d.storage_health.object_count
+                : '-';
+
+            if (syncOk && quorumOk) {
+                setPulse('ok', 'Cluster synchronized. ' + online + '/' + total + ' nodes online.');
+            } else if (online === 0) {
+                setPulse('bad', 'No online nodes detected.');
+            } else {
+                setPulse('warn', 'Cluster is reachable but degraded. Check quorum/sync.');
+            }
+
+            const nodeRows = (nodes.nodes || []).map(node => {
+                return '<li class="row">'
+                    + '<div><div><strong>' + short(node.profile.id) + '</strong> (tier ' + node.profile.tier + ')</div>'
+                    + '<div class="mono">' + node.rest_endpoint + ' | ' + rolesFromNode(node) + '</div></div>'
+                    + '<div>' + statusTag(node.status) + ' <button class="btn-link" onclick="selectNode(\'' + node.profile.id + '\')">Inspect</button></div>'
+                    + '</li>';
+            }).join('');
+
+            const filteredJobs = applyJobFilters(jobs.jobs || []);
+            const recentJobs = filteredJobs.slice().sort((a, b) => {
+                return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+            }).slice(0, 12);
+
+            const jobRows = recentJobs.map(job => {
+                return '<li class="row">'
+                    + '<div><div><strong>' + short(job.job_id) + '</strong></div>'
+                    + '<div class="mono">assigned ' + short(job.assigned_to) + ' | runtime ' + String(job.runtime).toLowerCase() + '</div></div>'
+                    + '<div>' + statusTag(job.status) + ' <button class="btn-link" onclick="selectJob(\'' + job.job_id + '\')">Inspect</button></div>'
+                    + '</li>';
+            }).join('');
+
+            const timelineRows = appState.timeline.map(item => {
+                return '<li class="row">'
+                    + '<div><div><strong>' + item.message + '</strong></div>'
+                    + '<div class="mono">' + item.at + '</div></div>'
+                    + '<span class="tag ' + item.level + '">' + item.level + '</span>'
+                    + '</li>';
+            }).join('');
+
+            const selectedNode = getSelectedNode();
+            const nodeDetail = selectedNode
+                ? '<div class="detail-box"><div><strong>' + selectedNode.profile.id + '</strong></div>'
+                    + '<div class="mono">tier=' + selectedNode.profile.tier + ' roles=' + rolesFromNode(selectedNode) + '</div>'
+                    + '<div class="mono">grpc=' + selectedNode.grpc_endpoint + '</div>'
+                    + '<div class="mono">rest=' + selectedNode.rest_endpoint + '</div>'
+                    + '</div>'
+                : '<p class="empty">Select a node from topology to inspect details.</p>';
+
+            const selectedJob = getSelectedJob();
+            const jobDetail = selectedJob
+                ? '<div class="detail-box"><div><strong>' + selectedJob.job_id + '</strong></div>'
+                    + '<div class="mono">status=' + String(selectedJob.status).toLowerCase() + ' assigned=' + selectedJob.assigned_to + '</div>'
+                    + '<div class="mono">runtime=' + String(selectedJob.runtime).toLowerCase() + ' source=' + selectedJob.source + '</div>'
+                    + '<div class="mono">created=' + selectedJob.created_at + '</div>'
+                    + '<div class="mono">updated=' + selectedJob.updated_at + '</div>'
+                    + '</div>'
+                : '<p class="empty">Select a job to inspect lifecycle details.</p>';
+
+            const nodeFilterOptions = ['<option value="">all nodes</option>']
+                .concat((nodes.nodes || []).map(n => {
+                    const v = String(n.profile.id);
+                    const sel = appState.filters.jobNode === v ? ' selected' : '';
+                    return '<option value="' + v + '"' + sel + '>' + short(v) + '</option>';
+                }))
+                .join('');
+
+            const content = ''
+                + '<article class="card span-4">'
+                + '<h2>Cluster Pulse</h2>'
+                + '<div class="stats">'
+                + '<div class="stat"><div class="stat-k">Nodes Online</div><div class="stat-v ' + (online > 0 ? 'ok' : 'bad') + '">' + online + '/' + total + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Quorum</div><div class="stat-v ' + (quorumOk ? 'ok' : 'bad') + '">' + (quorumOk ? 'healthy' : 'unhealthy') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">State Sync</div><div class="stat-v ' + (syncOk ? 'ok' : 'warn') + '">' + (syncOk ? 'in sync' : 'degraded') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Uptime</div><div class="stat-v">' + formatUptime(d.uptime_seconds) + '</div></div>'
+                + '</div></article>'
+
+                + '<article class="card span-4">'
+                + '<h2>Distributed State</h2>'
+                + '<div class="stats">'
+                + '<div class="stat"><div class="stat-k">Raft Enabled</div><div class="stat-v">' + (d.distributed_state.raft_enabled ? 'yes' : 'no') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Consensus Nodes</div><div class="stat-v">' + d.distributed_state.consensus_nodes + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Leader</div><div class="stat-v mono">' + short(d.distributed_state.raft_leader || '-') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Term</div><div class="stat-v">' + (d.distributed_state.raft_term || 0) + '</div></div>'
+                + '</div></article>'
+
+                + '<article class="card span-4">'
+                + '<h2>Storage Health</h2>'
+                + '<div class="stats">'
+                + '<div class="stat"><div class="stat-k">Storage Role</div><div class="stat-v">' + (d.node_roles.storage ? 'enabled' : 'disabled') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Objects</div><div class="stat-v">' + objectCount + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Free MB</div><div class="stat-v">' + (d.storage_health && d.storage_health.available_space_mb != null ? d.storage_health.available_space_mb : '-') + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Accessible</div><div class="stat-v ' + ((d.storage_health && d.storage_health.accessible) ? 'ok' : 'bad') + '">' + ((d.storage_health && d.storage_health.accessible) ? 'yes' : 'no') + '</div></div>'
+                + '</div></article>'
+
+                + '<article class="card span-8">'
+                + '<h2>Node Topology</h2>'
+                + (nodeRows ? '<ul class="node-list">' + nodeRows + '</ul>' : '<p class="empty">No nodes reported yet.</p>')
+                + '</article>'
+
+                + '<article class="card span-4">'
+                + '<h2>Selected Node</h2>' + nodeDetail
+                + '</article>'
+
+                + '<article class="card span-4">'
+                + '<h2>Job Lifecycle</h2>'
+                + '<div class="stats">'
+                + '<div class="stat"><div class="stat-k">Queued</div><div class="stat-v warn">' + counts.queued + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Running</div><div class="stat-v warn">' + counts.running + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Completed</div><div class="stat-v ok">' + counts.completed + '</div></div>'
+                + '<div class="stat"><div class="stat-k">Failed</div><div class="stat-v bad">' + counts.failed + '</div></div>'
+                + '</div></article>'
+
+                + '<article class="card span-8">'
+                + '<h2>Recent Jobs</h2>'
+                + '<div class="toolbar">'
+                + '<select onchange="setJobStatusFilter(this.value)">'
+                + '<option value="all"' + (appState.filters.jobStatus === 'all' ? ' selected' : '') + '>all statuses</option>'
+                + '<option value="queued"' + (appState.filters.jobStatus === 'queued' ? ' selected' : '') + '>queued</option>'
+                + '<option value="running"' + (appState.filters.jobStatus === 'running' ? ' selected' : '') + '>running</option>'
+                + '<option value="completed"' + (appState.filters.jobStatus === 'completed' ? ' selected' : '') + '>completed</option>'
+                + '<option value="failed"' + (appState.filters.jobStatus === 'failed' ? ' selected' : '') + '>failed</option>'
+                + '<option value="cancelled"' + (appState.filters.jobStatus === 'cancelled' ? ' selected' : '') + '>cancelled</option>'
+                + '</select>'
+                + '<select onchange="setJobNodeFilter(this.value)">' + nodeFilterOptions + '</select>'
+                + '</div>'
+                + (jobRows ? '<ul class="job-list">' + jobRows + '</ul>' : '<p class="empty">No jobs match selected filters.</p>')
+                + '</article>'
+
+                + '<article class="card span-4">'
+                + '<h2>Selected Job</h2>' + jobDetail
+                + '</article>'
+
+                + '<article class="card span-12">'
+                + '<h2>Operational Timeline (Live SSE)</h2>'
+                + (timelineRows ? '<ul class="timeline">' + timelineRows + '</ul>' : '<p class="empty">Timeline will populate from /v1/ops/events.</p>')
+                + '</article>';
+
+            document.getElementById('content').innerHTML = content;
+            document.getElementById('error').textContent = '';
+            const stamp = document.createElement('div');
+            stamp.className = 'timestamp';
+            stamp.textContent = 'Last refresh: ' + new Date().toLocaleTimeString() + ' | Auto-refresh 5s | Events stream active';
+            document.getElementById('content').appendChild(stamp);
+        }
+
+        document.getElementById('secret').value = localStorage.getItem('all4one_secret') || '';
+        reconnectOpsEvents();
+        setInterval(refreshData, 5000);
+        refreshData();
+    </script>
+</body>
+</html>

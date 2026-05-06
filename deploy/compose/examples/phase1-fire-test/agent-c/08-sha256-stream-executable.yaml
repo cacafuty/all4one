@@ -1,0 +1,12 @@
+# 08 — SHA-256 stream with executable runtime
+runtime: executable
+source: /bin/sh
+command:
+  - -lc
+  - printf 'all4one-stream' | sha256sum | cut -d' ' -f1
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 1
+  requires_capabilities: {}

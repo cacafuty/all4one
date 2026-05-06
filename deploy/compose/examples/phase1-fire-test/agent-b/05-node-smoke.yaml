@@ -1,0 +1,14 @@
+# 05 — Node.js API smoke process
+runtime: docker
+source: node:20-alpine
+command:
+  - node
+  - -e
+  - console.log('node-rest-api-smoke ok')
+resources:
+  cpu_cores: 1
+  memory_mb: 128
+constraints:
+  tier_min: 1
+  requires_capabilities:
+    docker: true

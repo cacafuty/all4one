@@ -1,96 +1,88 @@
 # All4One
 
-Plataforma de infraestructura distribuida P2P que convierte hardware heterogéneo
-existente (portátiles, PCs de oficina, servidores, Raspberry Pi, móviles Android)
-en un clúster unificado de cómputo y almacenamiento. Los procesos que corren sobre
-él no saben que están en un entorno distribuido.
+P2P distributed infrastructure platform that turns existing heterogeneous hardware
+(laptops, office PCs, servers, Raspberry Pi, Android phones) into a unified compute
+and storage cluster. Processes running on it are unaware of the distributed environment.
 
 ---
 
-## Principio central
+## Core principle
 
-No existe un nodo obligatorio de orquestación. Cualquier nodo puede recibir jobs
-y coordinar. El clúster funciona con lo que haya disponible en cada momento.
+All4One works with **any number of nodes: from 1 to N**. A single agent on your
+laptop is already a fully functional cluster; adding more nodes increases capacity,
+resilience, and hardware diversity — but is never a requirement.
+
+There is no mandatory orchestration node. Any node can receive jobs and coordinate.
+The cluster works with whatever is available at any given moment.
 
 ```
 ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  Portátil   │   │ Raspberry   │   │  PC Oficina │
+│   Laptop    │   │ Raspberry   │   │ Office PC   │
 │  (Tier 1)   │◄──│   Pi Tier 0 │──►│  (Tier 1)   │
 │  scheduler  │   │  scheduler  │   │  executor   │
 │  executor   │   │  executor   │   │  storage    │
 └─────────────┘   │  storage    │   └─────────────┘
-                  │  raft/quórum│
+                  │  raft/quorum│
                   └─────────────┘
-         Cualquier nodo acepta jobs y coordina
+         Any node accepts jobs and coordinates
 ```
 
 ---
 
-## Modelo de negocio
-
-Software on-premise con suscripción anual por número de nodos activos:
-
-| Plan       | Nodos       |
-|------------|-------------|
-| Starter    | hasta 10    |
-| Business   | hasta 50    |
-| Enterprise | ilimitados  |
-
-A futuro: cloud low-cost operado por All4One para empresas sin infraestructura
-propia, con el mismo agente y modelo multi-tenant.
-
----
-
-## Arquitectura en una página
+## Architecture at a glance
 
 ```
-                        AGENTE (único binario Rust)
+                        AGENT (single Rust binary)
                  ┌──────────────────────────────────────┐
                  │  config  │  node  │  discovery        │
                  │──────────────────────────────────────│
                  │  gossip (SWIM UDP:7947)               │
                  │──────────────────────────────────────│
-                 │  raft (openraft, Fase 2+)             │
+                 │  raft (openraft, Phase 2+)            │
                  │──────────────────────────────────────│
                  │  scheduler  │  executor  │  storage   │
                  │──────────────────────────────────────│
                  │  api_rest (:7946) │ grpc (:7947)      │
                  │──────────────────────────────────────│
-                 │  certificates (Fase 2+)               │
+                 │  certificates (Phase 2+)              │
                  │──────────────────────────────────────│
-                 │  lifecycle (Fase 3+, líder Raft only) │
+                 │  lifecycle (Phase 4+, Raft leader only)│
                  └──────────────────────────────────────┘
 ```
 
-El agente ejerce hasta tres roles simultáneamente según configuración:
+Each agent runs up to three roles simultaneously, configured independently:
 
-- **SCHEDULER** — recibe jobs y decide placement
-- **EXECUTOR** — ejecuta jobs
-- **STORAGE** — almacena chunks
-
----
-
-## Tiers de nodos
-
-| Tier | Descripción                                     | Quórum |
-|------|-------------------------------------------------|--------|
-| 0    | 24/7. Servidores, NAS, Raspberry Pi dedicado.   | Sí     |
-| 1    | Disponibilidad predecible con horario conocido. | Sí     |
-| 2    | Oportunista. Portátiles personales, móviles.    | No     |
-
-La metadata crítica y al menos una réplica de cada dato residen siempre en Tier 0.
+- **SCHEDULER** — receives jobs and decides placement
+- **EXECUTOR** — runs assigned jobs
+- **STORAGE** — stores chunks
 
 ---
 
-## Inicio rápido (Fase 1)
+## Node tiers
 
-### Primer nodo
+| Tier | Description                                        | Quorum |
+|------|----------------------------------------------------|--------|
+| 0    | 24/7. Servers, NAS, dedicated Raspberry Pi.        | Yes    |
+| 1    | Predictable availability on a known schedule.      | Yes    |
+| 2    | Opportunistic. Personal laptops, mobile devices.   | No     |
+
+Critical metadata and at least one replica of every object always reside on Tier 0.
+
+---
+
+## Quick start (Phase 1)
+
+> A single node is enough to get started. You can add more at any time.
+> In Phase 1, `shared_secret` protects REST endpoints as a simple access-control option.
+> In Phase 2+, enrollment is always CA-issued via `Join`; join authorization supports both CA-based bootstrap trust (recommended) and an optional `shared_secret` gate.
+
+### Single node (minimum viable setup)
 
 ```bash
-# Instalación
+# Installation
 curl -sSL https://releases.all4one.io/install.sh | bash
 
-# Configuración mínima
+# Minimal configuration
 cat > /etc/all4one/agent.toml << 'EOF'
 [node]
 tier = 0
@@ -101,7 +93,7 @@ data_dir = "/var/lib/all4one"
 [roles]
 scheduler = true
 executor = true
-storage = false
+storage = true
 
 [network]
 bind_address = "0.0.0.0"
@@ -117,11 +109,11 @@ mdns = true
 seeds = []
 EOF
 
-# Arranque
+# Start
 all4one-agent start
 ```
 
-### Segundo nodo (mismo flag `seeds`)
+### Additional node (optional — adds capacity and resilience)
 
 ```bash
 cat > /etc/all4one/agent.toml << 'EOF'
@@ -153,7 +145,7 @@ EOF
 all4one-agent start
 ```
 
-### Primer job
+### First job
 
 ```bash
 cat > hello.yaml << 'EOF'
@@ -173,87 +165,88 @@ curl -X POST http://192.168.1.100:7946/v1/jobs \
 
 ---
 
-## Fases de implementación
+## Implementation phases
 
-| Fase | Nombre                          | Descripción breve                           |
-|------|---------------------------------|---------------------------------------------|
-| 1    | Ejecuta algo en algún sitio     | Gossip + scheduler + executor. Sin storage. |
-| 2    | Los datos viven en el clúster   | Raft + storage + mTLS + PKI interna.        |
-| 3    | Los datos se gestionan solos    | Lifecycle engine + tiering automático.      |
-| 4    | Transparencia total ante procesos | FUSE + LD_PRELOAD + SDK + S3 API.         |
-| 5    | Plataformas y madurez           | Android + GPU + multi-tenant + UI web.      |
+| Phase | Name                              | Brief description                             |
+|-------|-----------------------------------|-----------------------------------------------|
+| 1     | Run something, somewhere          | Gossip + scheduler + executor. No storage.    |
+| 2     | Data lives in the cluster         | Raft + storage + mTLS + internal PKI.         |
+| 3     | Operational UI and visibility     | Real-time cluster state, jobs, storage, events. |
+| 4     | Data manages itself               | Lifecycle engine + automatic tiering.         |
+| 5     | Full process transparency         | FUSE + LD_PRELOAD + SDK + S3 API.             |
+| 6     | Platforms and maturity            | Android + GPU + multi-tenant + hardening.     |
 
 ---
 
-## Documentación
+## Documentation
 
-### Arquitectura
-- [Visión general](docs/architecture/overview.md)
-- [Módulos del agente](docs/architecture/agent.md)
-- [Protocolos de red](docs/architecture/networking.md)
-- [Scheduler y placement](docs/architecture/scheduler.md)
-- [Almacenamiento distribuido](docs/architecture/storage.md)
+### Architecture
+- [Overview](docs/architecture/overview.md)
+- [Agent modules](docs/architecture/agent.md)
+- [Network protocols](docs/architecture/networking.md)
+- [Scheduler and placement](docs/architecture/scheduler.md)
+- [Distributed storage](docs/architecture/storage.md)
 - [Lifecycle engine](docs/architecture/lifecycle.md)
-- [IA e inferencia](docs/architecture/ai-inference.md)
+- [AI and inference](docs/architecture/ai-inference.md)
 
 ### API
-- [Especificación Job](docs/api/job-spec.md)
-- [API REST completa](docs/api/rest-api.md)
-- [Referencia agent.toml](docs/api/config-reference.md)
+- [Job specification](docs/api/job-spec.md)
+- [Full REST API](docs/api/rest-api.md)
+- [agent.toml reference](docs/api/config-reference.md)
 
-### Fases
-- [Fase 1](docs/phases/phase-1.md) · [Fase 2](docs/phases/phase-2.md) · [Fase 3](docs/phases/phase-3.md) · [Fase 4](docs/phases/phase-4.md) · [Fase 5](docs/phases/phase-5.md)
+### Phases
+- [Phase 1](docs/phases/phase-1.md) · [Phase 2](docs/phases/phase-2.md) · [Phase 3](docs/phases/phase-3.md) · [Phase 4](docs/phases/phase-4.md) · [Phase 5](docs/phases/phase-5.md) · [Phase 6](docs/phases/phase-6.md)
 
-### Guías
-- [Configuración de un nodo](docs/guides/node-setup.md)
-- [Primeros pasos](docs/guides/getting-started.md)
+### Guides
+- [Node setup](docs/guides/node-setup.md)
+- [Getting started](docs/guides/getting-started.md)
 
-### Decisiones de arquitectura
-- [ADR-001 Rust para el agente](docs/decisions/001-rust-agent.md)
-- [ADR-002 Sin nodo central](docs/decisions/002-no-central-node.md)
-- [ADR-003 Sin MinIO](docs/decisions/003-no-minio.md)
+### Architecture decisions
+- [ADR-001 Rust for the agent](docs/decisions/001-rust-agent.md)
+- [ADR-002 No central node](docs/decisions/002-no-central-node.md)
+- [ADR-003 No MinIO](docs/decisions/003-no-minio.md)
 - [ADR-004 llama.cpp RPC](docs/decisions/004-llama-cpp-rpc.md)
-- [ADR-005 gRPC interno](docs/decisions/005-grpc-internal.md)
+- [ADR-005 Internal gRPC](docs/decisions/005-grpc-internal.md)
 - [ADR-006 PKI + mTLS](docs/decisions/006-pki-mtls.md)
 
 ---
 
-## Stack tecnológico (resumen de licencias)
+## Technology stack (license summary)
 
-| Crate / librería | Licencia     | Uso                         |
+| Crate / library  | License      | Usage                       |
 |------------------|--------------|-----------------------------|
 | tokio            | MIT          | async runtime               |
 | axum             | MIT          | API REST                    |
-| tonic            | MIT          | gRPC server y client        |
+| tonic            | MIT          | gRPC server and client      |
 | prost            | Apache 2.0   | Protocol Buffers            |
-| openraft         | Apache 2.0   | consenso Raft embebido      |
+| openraft         | Apache 2.0   | embedded Raft consensus     |
 | chitchat         | Apache 2.0   | SWIM gossip                 |
-| mdns-sd          | MIT          | descubrimiento mDNS         |
+| mdns-sd          | MIT          | mDNS discovery              |
 | reed-solomon     | Apache 2.0   | erasure coding              |
-| zstd             | MIT          | compresión                  |
-| rcgen            | MIT          | certificados X.509          |
+| zstd             | MIT          | compression                 |
+| rcgen            | MIT          | X.509 certificates          |
 | rustls           | Apache 2.0   | TLS                         |
-| sled             | MIT          | índice de chunks            |
+| sled             | MIT          | chunk index                 |
 | fuser            | MIT          | FUSE Linux/macOS            |
-| WinFsp           | LGPL         | FUSE Windows (enlace dinámico) |
-| wasmtime         | Apache 2.0   | runtime WASM                |
-| llama.cpp        | MIT          | inferencia IA y RPC         |
-| bincode          | MIT          | serialización SWIM          |
+| WinFsp           | LGPL         | FUSE Windows (dynamic link) |
+| wasmtime         | Apache 2.0   | WASM runtime                |
+| llama.cpp        | MIT          | AI inference and RPC        |
+| bincode          | MIT          | SWIM serialization          |
 
-> **MinIO descartado**: AGPL v3 incompatible con redistribución propietaria.
-> Ver [ADR-003](docs/decisions/003-no-minio.md).
+> **MinIO discarded**: AGPL v3 incompatible with proprietary redistribution.
+> See [ADR-003](docs/decisions/003-no-minio.md).
 
 ---
 
-## Plataformas soportadas
+## Supported platforms
 
-| Plataforma      | Executor | Storage | Quórum | FUSE |
+| Platform        | Executor | Storage | Quorum | FUSE |
 |-----------------|----------|---------|--------|------|
-| Linux x86_64    | ✓        | ✓       | ✓      | Nativo |
-| Linux ARM64     | ✓        | ✓       | ✓      | Nativo |
+| Linux x86_64    | ✓        | ✓       | ✓      | Native |
+| Linux ARM64     | ✓        | ✓       | ✓      | Native |
 | macOS ARM64     | ✓        | ✓       | ✓      | macFUSE |
 | macOS x86_64    | ✓        | ✓       | ✓      | macFUSE |
 | Windows x86_64  | ✓        | ✓       | ✓      | WinFsp |
 | Android ARM64   | —        | ✓       | —      | — |
 
-iOS: descartado en v1 por sandbox de Apple.
+iOS: dropped from v1 due to Apple sandbox restrictions.
