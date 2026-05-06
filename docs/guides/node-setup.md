@@ -42,15 +42,22 @@ shared_secret = "compose-secret"
 - Verify `GET /health`
 - Verify visibility in `GET /v1/nodes`
 
-## Steam Deck example: join a local 3-container cluster
+## Steam Deck example: 3-container cluster + host agent + Steam Deck
 
-Use this topology when your base machine runs the three Phase 2 Docker agents and you want to attach a Steam Deck on the same LAN as an extra Linux executor.
+Use this topology when your base machine runs the three Phase 2 Docker agents **and** a fourth native agent, and you want to attach a Steam Deck on the same LAN as a fifth executor node.
 
-- Base machine: `agent-a`, `agent-b`, `agent-c` from `deploy/compose/docker-compose.phase2.yml`
-- Storage stays on the three Docker agents, each with its own isolated named volume
-- Steam Deck joins as a Tier 2, non-quorum node with its own local `data_dir`
+| Node | Where | Ports (REST / gRPC) | Role |
+|---|---|---|---|
+| `agent-a` | Docker on base machine | `7946` / `7947` | storage, scheduler, quorum |
+| `agent-b` | Docker on base machine | `8946` / `8947` | storage, quorum |
+| `agent-c` | Docker on base machine | `9946` / `9947` | storage, quorum |
+| `agent-local` | Native process on base machine | `10946` / `10947` | executor (Windows/Linux host) |
+| `agent-deck` | Steam Deck on LAN | `7946` / `7947` | executor |
 
-### 1. Start the base cluster on the main machine
+- Storage stays on the three Docker agents, each with its own isolated named volume.
+- The host agent and Steam Deck are Tier 2 executor-only nodes; they discover the cluster via a single seed.
+
+### 1. Start the three Docker agents on the base machine
 
 ```bash
 cd deploy/compose
@@ -58,13 +65,27 @@ docker compose -f docker-compose.phase2.yml up --build -d
 docker compose -f docker-compose.phase2.yml ps
 ```
 
-Record the LAN IP of the base machine as `<HOST_IP>`. The Steam Deck must be able to reach these mapped ports on that host:
+Record the LAN IP of the base machine as `<HOST_IP>`. All other nodes reach the Docker agents through this IP.
 
-- `<HOST_IP>:7947` for `agent-a`
-- `<HOST_IP>:8947` for `agent-b`
-- `<HOST_IP>:9947` for `agent-c`
+### 2. Start the host agent directly on the base machine
 
-### 2. Download the Linux x86-64 release binary
+A pre-built config is included at `deploy/compose/configs/agent-win-local.toml` (works on Windows and Linux with minor path adjustments).
+
+**Windows (PowerShell):**
+```powershell
+$env:ALL4ONE_ADVERTISE_HOST = "<HOST_IP>"
+.\all4one-agent.exe start --config deploy\compose\configs\agent-win-local.toml
+```
+
+**Linux host:**
+```bash
+export ALL4ONE_ADVERTISE_HOST="<HOST_IP>"
+./all4one-agent start --config deploy/compose/configs/agent-win-local.toml
+```
+
+The host agent uses ports `10946` (REST) and `10947` (gRPC) to avoid collisions with the Docker containers. It seeds from `127.0.0.1:7947` (agent-a), which is enough to discover the full cluster.
+
+### 3. Download the Linux x86-64 release binary on the Steam Deck
 
 The GitHub release includes a pre-built `all4one-agent` for Linux x86-64, which runs directly on SteamOS without needing Rust installed.
 
@@ -80,7 +101,7 @@ export PATH="$HOME/bin:$PATH"
 all4one-agent --version
 ```
 
-### 3. Create a Steam Deck node config
+### 4. Create a Steam Deck node config
 
 Choose the Steam Deck LAN IP and keep it as `<STEAM_DECK_IP>`.
 
@@ -130,9 +151,9 @@ EOF
 
 Replace `<HOST_IP>` with the LAN IP of the base machine before starting the agent.
 
-### 4. Start the Steam Deck node with its advertised IP
+### 5. Start the Steam Deck node with its advertised IP
 
-The Docker nodes must be able to dial back to the Steam Deck. Set `ALL4ONE_ADVERTISE_HOST` so the agent publishes its real LAN address instead of `0.0.0.0` or a local hostname.
+The other nodes must be able to dial back to the Steam Deck. Set `ALL4ONE_ADVERTISE_HOST` so the agent publishes its real LAN address instead of `0.0.0.0`.
 
 ```bash
 export PATH="$HOME/bin:$PATH"
@@ -140,42 +161,43 @@ export ALL4ONE_ADVERTISE_HOST="<STEAM_DECK_IP>"
 all4one-agent start --config "$HOME/.config/all4one/steamdeck.toml"
 ```
 
-If you prefer not to copy the binary into `$HOME/bin`, run `target/release/all4one-agent` from the repository checkout instead.
+### 6. Verify the full 5-node cluster
 
-### 5. Verify from the Steam Deck
+From any node (including Steam Deck):
 
 ```bash
 curl -s http://127.0.0.1:7946/health
 curl -s -H "X-All4One-Secret: compose-secret" \
-	"http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
+    "http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
 ```
 
-Expected result: the cluster view on the base machine shows `4` total nodes and the Steam Deck appears as a Tier 2 executor.
+Expected result: `"total": 5` with agent-a/b/c, the host agent, and the Steam Deck all listed.
 
-### 6. Open the operational UI from the Steam Deck
+### 7. Open the operational UI
 
-From the Steam Deck browser, open:
+From any browser on the LAN:
 
-- `http://<HOST_IP>:7946/`
-- `http://<HOST_IP>:8946/`
-- `http://<HOST_IP>:9946/`
+- `http://<HOST_IP>:7946/` — agent-a dashboard
+- `http://<HOST_IP>:8946/` — agent-b dashboard
+- `http://<HOST_IP>:9946/` — agent-c dashboard
+- `http://<HOST_IP>:10946/` — host agent dashboard
 
-Use the same `compose-secret` in the UI secret field.
+Use `compose-secret` in the secret field. Each dashboard shows the full 5-node topology.
 
-### 7. Common failure points
+### 8. Common failure points
 
 - If the Steam Deck never appears in `/v1/nodes`, re-check `ALL4ONE_ADVERTISE_HOST`.
-- If enrollment loops forever, confirm the base machine ports `7947`, `8947`, and `9947` are reachable from the Steam Deck.
-- If the Docker agents see the Steam Deck briefly and then mark it offline, confirm the Steam Deck firewall is not blocking TCP or UDP on `7947`.
+- If the host agent is missing, confirm `ALL4ONE_ADVERTISE_HOST` is set to the LAN IP (not `127.0.0.1`).
+- If Docker agents can't reach the Steam Deck or host agent, confirm ports `7947` and `10947` are not blocked by the local firewall.
 
-### 8. Steam Deck-only execution checklist (Phase 2 + Phase 3)
+### 9. Steam Deck-only execution checklist (Phase 2 + Phase 3)
 
-Use this section as a practical runbook for what to do from the Steam Deck after the base machine has the 3 Phase 2 Docker agents running.
+Use this section as a practical runbook for what to do from the Steam Deck after the base machine has the 3 Phase 2 Docker agents and the host agent running.
 
 Before you start on Steam Deck:
 
 - You know `<HOST_IP>` (base machine LAN IP).
-- Ports are reachable from Steam Deck: `<HOST_IP>:7946`, `8946`, `9946` (REST) and `7947`, `8947`, `9947` (gRPC).
+- Port `7947` on `<HOST_IP>` is reachable from the Steam Deck (agent-a seed).
 - You already replaced `<HOST_IP>` in your `steamdeck.toml` seeds.
 
 #### Step A - start your local Steam Deck agent
@@ -189,7 +211,7 @@ all4one-agent start --config "$HOME/.config/all4one/steamdeck.toml"
 Expected outcome:
 
 - Agent starts locally on Steam Deck (`:7946` / `:7947`).
-- Within a few seconds the base cluster should see 4 nodes total.
+- Within a few seconds the cluster should see 5 nodes total.
 
 #### Step B - verify cluster membership from Steam Deck
 
@@ -197,30 +219,29 @@ Expected outcome:
 curl -s http://127.0.0.1:7946/health | python3 -m json.tool
 
 curl -s -H "X-All4One-Secret: compose-secret" \
-	"http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
+    "http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
 ```
 
 Expected outcome:
 
 - Steam Deck health reports `status: ok`.
-- Node list from base machine includes your Steam Deck as Tier 2.
+- Node list shows 5 nodes: agent-a, agent-b, agent-c, host agent, Steam Deck.
 
 #### Step C - validate Phase 3 visibility from Steam Deck browser
 
 Open from Steam Deck:
 
 - `http://<HOST_IP>:7946/`
-- `http://<HOST_IP>:8946/`
-- `http://<HOST_IP>:9946/`
+- `http://<HOST_IP>:10946/`
 
 In each UI page, set the same secret (`compose-secret`) in the secret field.
 
 What to check in the UI:
 
-- Node topology shows 4 nodes.
+- Node topology shows 5 nodes.
 - Job lifecycle cards update when jobs run.
 - Operational timeline receives live events (node/job transitions).
-- Cluster pulse and distributed state are consistent across the three UI endpoints.
+- Cluster pulse and distributed state are consistent across dashboards.
 
 #### Step D - trigger activity from Steam Deck (optional)
 
@@ -230,14 +251,14 @@ runtime: python
 source: "volatile://scripts/probe.py"
 command: ["-c", "import time; print('steamdeck-probe'); time.sleep(2); print('done')"]
 resources:
-	cpu_cores: 1
-	memory_mb: 128
+    cpu_cores: 1
+    memory_mb: 128
 EOF
 
 curl -s -X POST "http://<HOST_IP>:7946/v1/jobs" \
-	-H "Content-Type: application/yaml" \
-	-H "X-All4One-Secret: compose-secret" \
-	--data-binary @/tmp/steamdeck-probe.yaml | python3 -m json.tool
+    -H "Content-Type: application/yaml" \
+    -H "X-All4One-Secret: compose-secret" \
+    --data-binary @/tmp/steamdeck-probe.yaml | python3 -m json.tool
 ```
 
 Then refresh the Phase 3 UI and verify recent jobs and timeline entries are updated.
