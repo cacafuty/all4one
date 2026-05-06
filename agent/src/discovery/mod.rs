@@ -1,9 +1,16 @@
 use crate::config::schema::Config;
 use all4one_common::{ClusterState, NodeId, NodeInfo, NodeStatus};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
+
+/// Response shape for GET /v1/nodes (we only need the node list).
+#[derive(Deserialize)]
+struct NodesResponse {
+    nodes: Vec<NodeInfo>,
+}
 
 pub fn spawn_seed_discovery(
     config: Arc<Config>,
@@ -15,33 +22,68 @@ pub fn spawn_seed_discovery(
         let client = reqwest::Client::new();
         loop {
             for seed in &config.discovery.seeds {
-                let endpoint = format!("http://{}/v1/internal/node", seed_to_rest(seed));
-                let response = client.get(&endpoint).send().await;
-                let Ok(response) = response else {
-                    continue;
-                };
-                let Ok(node) = response.json::<NodeInfo>().await else {
-                    continue;
-                };
-                if node.profile.id == self_id {
-                    continue;
-                }
+                let rest_addr = seed_to_rest(seed);
 
-                {
-                    let mut state = cluster.write().await;
-                    let mut discovered = node.clone();
-                    discovered.status = NodeStatus::Online;
-                    state.nodes.insert(discovered.profile.id, discovered);
-                    state.version = state.version.saturating_add(1);
+                // Ask this seed for the full peer list it knows about.
+                // A single reachable seed is enough to discover the whole cluster.
+                let endpoint = format!("http://{rest_addr}/v1/nodes");
+                let response = match client.get(&endpoint).send().await {
+                    Ok(r) => r,
+                    Err(_) => {
+                        // Seed unreachable — fall back to its own identity only.
+                        let fallback = format!("http://{rest_addr}/v1/internal/node");
+                        match client.get(&fallback).send().await {
+                            Ok(r) => {
+                                if let Ok(node) = r.json::<NodeInfo>().await {
+                                    if node.profile.id != self_id {
+                                        upsert_peer(&cluster, &last_seen, node).await;
+                                    }
+                                }
+                                continue;
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                };
+
+                let Ok(body) = response.json::<NodesResponse>().await else {
+                    continue;
+                };
+
+                let now = Instant::now();
+                let mut state = cluster.write().await;
+                let mut seen = last_seen.write().await;
+                for node in body.nodes {
+                    if node.profile.id == self_id {
+                        continue;
+                    }
+                    let id = node.profile.id;
+                    let mut peer = node;
+                    peer.status = NodeStatus::Online;
+                    state.nodes.insert(id, peer);
+                    seen.insert(id, now);
                 }
-                {
-                    let mut seen = last_seen.write().await;
-                    seen.insert(node.profile.id, Instant::now());
-                }
+                state.version = state.version.saturating_add(1);
             }
             sleep(Duration::from_secs(5)).await;
         }
     });
+}
+
+async fn upsert_peer(
+    cluster: &Arc<RwLock<ClusterState>>,
+    last_seen: &Arc<RwLock<HashMap<NodeId, Instant>>>,
+    node: NodeInfo,
+) {
+    let id = node.profile.id;
+    let now = Instant::now();
+    let mut state = cluster.write().await;
+    let mut peer = node;
+    peer.status = NodeStatus::Online;
+    state.nodes.insert(id, peer);
+    state.version = state.version.saturating_add(1);
+    drop(state);
+    last_seen.write().await.insert(id, now);
 }
 
 fn seed_to_rest(seed: &str) -> String {

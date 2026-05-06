@@ -105,7 +105,8 @@ grpc_port = 7947
 
 [discovery]
 mdns = false
-seeds = ["<HOST_IP>:7947", "<HOST_IP>:8947", "<HOST_IP>:9947"]
+# One seed is enough — the agent will learn the full peer list from it.
+seeds = ["<HOST_IP>:7947"]
 
 [security]
 mode = "dev"
