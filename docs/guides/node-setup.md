@@ -127,8 +127,8 @@ grpc_port = 7947
 
 [discovery]
 mdns = false
-# One seed is enough — the agent will learn the full peer list from it.
-seeds = ["<HOST_IP>:7947"]
+# Seed points to the host agent's gRPC port (10947 for agent-win-local).
+seeds = ["<HOST_IP>:10947"]
 
 [security]
 mode = "dev"

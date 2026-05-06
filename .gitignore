@@ -4,3 +4,5 @@ tmp/
 deploy/compose/.env
 deploy/compose/.env.local
 scripts/
+all4one-agent.exe
+*.exe

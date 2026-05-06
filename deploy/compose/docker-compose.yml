@@ -5,13 +5,17 @@ services:
       dockerfile: deploy/compose/Dockerfile
     container_name: all4one-agent-a
     command: ["start", "--config", "/configs/agent-a.toml"]
+    environment:
+      - ALL4ONE_ADVERTISE_HOST=${HOST_IP:-192.168.1.135}
+      - ALL4ONE_ADVERTISE_GRPC_PORT=7947
+      - ALL4ONE_ADVERTISE_REST_PORT=7946
     volumes:
       - ./configs:/configs:ro
       - agent_a_data:/var/lib/all4one
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "7946:7946"
-      - "7947:7947"
+      - "0.0.0.0:7946:7946"
+      - "0.0.0.0:7947:7947"
     networks:
       - all4one
     extra_hosts:
@@ -23,13 +27,17 @@ services:
       dockerfile: deploy/compose/Dockerfile
     container_name: all4one-agent-b
     command: ["start", "--config", "/configs/agent-b.toml"]
+    environment:
+      - ALL4ONE_ADVERTISE_HOST=${HOST_IP:-192.168.1.135}
+      - ALL4ONE_ADVERTISE_GRPC_PORT=8947
+      - ALL4ONE_ADVERTISE_REST_PORT=8946
     volumes:
       - ./configs:/configs:ro
       - agent_b_data:/var/lib/all4one
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "8946:7946"
-      - "8947:7947"
+      - "0.0.0.0:8946:7946"
+      - "0.0.0.0:8947:7947"
     depends_on:
       - agent-a
     networks:
@@ -43,13 +51,17 @@ services:
       dockerfile: deploy/compose/Dockerfile
     container_name: all4one-agent-c
     command: ["start", "--config", "/configs/agent-c.toml"]
+    environment:
+      - ALL4ONE_ADVERTISE_HOST=${HOST_IP:-192.168.1.135}
+      - ALL4ONE_ADVERTISE_GRPC_PORT=9947
+      - ALL4ONE_ADVERTISE_REST_PORT=9946
     volumes:
       - ./configs:/configs:ro
       - agent_c_data:/var/lib/all4one
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - "9946:7946"
-      - "9947:7947"
+      - "0.0.0.0:9946:7946"
+      - "0.0.0.0:9947:7947"
     depends_on:
       - agent-a
     networks:

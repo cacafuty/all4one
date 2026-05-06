@@ -11,12 +11,13 @@ storage = false
 
 [network]
 bind_address = "0.0.0.0"
-grpc_port = 10947
-rest_port = 10946
+grpc_port = 7947
+rest_port = 7946
 
 [discovery]
 mdns = false
-seeds = ["127.0.0.1:7947"]
+# Point to the Steam Deck. Use the Steam Deck's LAN IP.
+seeds = ["192.168.1.131:7947"]
 
 [security]
 mode = "dev"

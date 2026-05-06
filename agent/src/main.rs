@@ -77,14 +77,22 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
             }
         })
         .unwrap_or_else(|| config.network.bind_address.clone());
+    let advertise_grpc_port = std::env::var("ALL4ONE_ADVERTISE_GRPC_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .unwrap_or(config.network.grpc_port);
+    let advertise_rest_port = std::env::var("ALL4ONE_ADVERTISE_REST_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .unwrap_or(config.network.rest_port);
     let id = node_id(&config.node.data_dir)?;
     let profile = profile(&config, id);
     let local_node = NodeInfo {
         profile: profile.clone(),
         status: NodeStatus::Online,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        grpc_endpoint: format!("{}:{}", advertise_host, config.network.grpc_port),
-        rest_endpoint: format!("{}:{}", advertise_host, config.network.rest_port),
+        grpc_endpoint: format!("{}:{}", advertise_host, advertise_grpc_port),
+        rest_endpoint: format!("{}:{}", advertise_host, advertise_rest_port),
     };
     let cluster = Arc::new(RwLock::new(ClusterState::default()));
     let last_seen = Arc::new(RwLock::new(HashMap::new()));

@@ -26,11 +26,12 @@ pub fn spawn_seed_discovery(
 
                 // Ask this seed for the full peer list it knows about.
                 // A single reachable seed is enough to discover the whole cluster.
-                let endpoint = format!("http://{rest_addr}/v1/nodes");
+                let endpoint = format!("http://{rest_addr}/v1/internal/nodes");
                 let response = match client.get(&endpoint).send().await {
-                    Ok(r) => r,
-                    Err(_) => {
-                        // Seed unreachable — fall back to its own identity only.
+                    Ok(r) if r.status().is_success() => r,
+                    // 404 = older agent without /internal/nodes; connection error = unreachable.
+                    // Either way fall back to the single-node identity endpoint.
+                    _ => {
                         let fallback = format!("http://{rest_addr}/v1/internal/node");
                         match client.get(&fallback).send().await {
                             Ok(r) => {

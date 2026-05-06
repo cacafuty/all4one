@@ -219,7 +219,9 @@ pub fn build_router(state: AppState) -> Router {
             shared_secret_middleware,
         ));
 
-    let internal = Router::new().route("/v1/internal/node", get(get_internal_node));
+    let internal = Router::new()
+        .route("/v1/internal/node", get(get_internal_node))
+        .route("/v1/internal/nodes", get(get_internal_nodes));
 
     Router::new()
         .route("/", get(dashboard_page))
@@ -752,6 +754,26 @@ pub fn start_ops_watchers(state: AppState) {
 
 async fn get_internal_node(State(state): State<AppState>) -> Json<NodeInfo> {
     Json(state.local_node.clone())
+}
+
+async fn get_internal_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
+    let st = state.cluster.read().await;
+    let mut nodes: Vec<NodeInfo> = st.nodes.values().cloned().collect();
+    nodes.sort_by_key(|n| n.profile.id.to_string());
+    let online = nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Online)
+        .count();
+    let offline = nodes
+        .iter()
+        .filter(|n| n.status == NodeStatus::Offline)
+        .count();
+    Json(NodesResponse {
+        total: nodes.len(),
+        online,
+        offline,
+        nodes,
+    })
 }
 
 async fn get_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
