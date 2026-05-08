@@ -207,7 +207,10 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
         {
             let mut last_seen = self.state.last_seen.write().await;
             last_seen.insert(joining_node.profile.id, tokio::time::Instant::now());
-            println!("DEBUG [JOIN] Marked heartbeat for node {}", joining_node.profile.id);
+            println!(
+                "DEBUG [JOIN] Marked heartbeat for node {}",
+                joining_node.profile.id
+            );
         }
 
         println!(

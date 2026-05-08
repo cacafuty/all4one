@@ -19,7 +19,17 @@ pub async fn request_join(
     node_id: Uuid,
     join_secret: Option<&str>,
 ) -> Result<EnrollmentBundle, tonic::Status> {
-    request_join_with_ca(endpoint, node_id, join_secret, None, 1, "127.0.0.1", 9999, 9998).await
+    request_join_with_ca(
+        endpoint,
+        node_id,
+        join_secret,
+        None,
+        1,
+        "127.0.0.1",
+        9999,
+        9998,
+    )
+    .await
 }
 
 pub async fn request_join_with_ca(

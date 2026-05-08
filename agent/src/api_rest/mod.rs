@@ -774,12 +774,12 @@ struct PeerListResponse {
 
 async fn get_internal_nodes(State(state): State<AppState>) -> Json<PeerListResponse> {
     let st = state.cluster.read().await;
-    
+
     println!(
         "DEBUG [/v1/internal/nodes] Cluster has {} nodes",
         st.nodes.len()
     );
-    
+
     let mut peers: Vec<PeerInfo> = st
         .nodes
         .values()

@@ -121,7 +121,15 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
         cert_manager.init_ca().await?;
         println!("INFO Certificate issuer ready (cluster bootstrap node)");
     } else if !cert_manager.has_node_credentials() {
-        enroll_with_seed_ca(&config, id, advertise_host.clone(), advertise_grpc_port, advertise_rest_port, &cert_manager).await?;
+        enroll_with_seed_ca(
+            &config,
+            id,
+            advertise_host.clone(),
+            advertise_grpc_port,
+            advertise_rest_port,
+            &cert_manager,
+        )
+        .await?;
     } else {
         println!("INFO Existing node certificate bundle found, skipping enrollment");
     }
