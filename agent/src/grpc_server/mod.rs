@@ -203,6 +203,13 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
             );
         }
 
+        // Mark heartbeat for the joining node to prevent immediate "suspected" status
+        {
+            let mut last_seen = self.state.last_seen.write().await;
+            last_seen.insert(joining_node.profile.id, tokio::time::Instant::now());
+            println!("DEBUG [JOIN] Marked heartbeat for node {}", joining_node.profile.id);
+        }
+
         println!(
             "INFO Cluster state updated: node {} (tier={}) added to cluster at {} / {}",
             node_id, payload.tier, payload.grpc_endpoint, payload.rest_endpoint
