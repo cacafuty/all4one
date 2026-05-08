@@ -30,6 +30,7 @@ pub fn spawn_seed_discovery(
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         loop {
+            // Discovery phase 1: Poll configured seeds
             for seed in &config.discovery.seeds {
                 let rest_addr = seed_to_rest(seed);
 
@@ -109,6 +110,84 @@ pub fn spawn_seed_discovery(
                 }
                 state.version = state.version.saturating_add(1);
             }
+
+            // Discovery phase 2: Reflexively discover through known nodes (bootstrap-free discovery)
+            // When a node joins via enrollment without seeds, other nodes discover it by
+            // asking nodes they already know about. This creates a self-healing mesh without
+            // requiring seeds to be configured.
+            let known_nodes: Vec<(NodeId, String)> = {
+                let state = cluster.read().await;
+                state
+                    .nodes
+                    .iter()
+                    .filter(|(id, _)| *id != &self_id)
+                    .map(|(id, info)| (*id, info.rest_endpoint.clone()))
+                    .collect()
+            };
+
+            for (_node_id, rest_endpoint) in known_nodes {
+                if rest_endpoint.is_empty() {
+                    continue;
+                }
+                let endpoint = format!("http://{rest_endpoint}/v1/internal/nodes");
+                let response = match client.get(&endpoint).send().await {
+                    Ok(r) if r.status().is_success() => r,
+                    _ => continue,
+                };
+
+                let Ok(body) = response.json::<PeerListResponse>().await else {
+                    continue;
+                };
+
+                let now = Instant::now();
+                let mut state = cluster.write().await;
+                let mut seen = last_seen.write().await;
+                for peer in body.peers {
+                    let Ok(uuid) = Uuid::parse_str(&peer.id) else {
+                        continue;
+                    };
+                    let id = NodeId(uuid);
+                    if id == self_id {
+                        continue;
+                    }
+                    state
+                        .nodes
+                        .entry(id)
+                        .and_modify(|n| {
+                            n.grpc_endpoint = peer.grpc_endpoint.clone();
+                            n.rest_endpoint = peer.rest_endpoint.clone();
+                            n.status = NodeStatus::Online;
+                        })
+                        .or_insert_with(|| NodeInfo {
+                            profile: all4one_common::NodeProfile {
+                                id,
+                                tier: peer.tier,
+                                availability: String::new(),
+                                quorum_participant: false,
+                                resources: all4one_common::NodeResources {
+                                    cpu_cores: 0,
+                                    memory_mb: 0,
+                                    disk_mb: None,
+                                },
+                                capabilities: all4one_common::NodeCapabilities {
+                                    docker: false,
+                                    python: None,
+                                    java: None,
+                                    wasm: false,
+                                    gpu_enabled: false,
+                                    storage_node: false,
+                                },
+                            },
+                            status: NodeStatus::Online,
+                            version: String::new(),
+                            grpc_endpoint: peer.grpc_endpoint,
+                            rest_endpoint: peer.rest_endpoint,
+                        });
+                    seen.insert(id, now);
+                }
+                state.version = state.version.saturating_add(1);
+            }
+
             sleep(Duration::from_secs(5)).await;
         }
     });
