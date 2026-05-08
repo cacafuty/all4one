@@ -148,6 +148,66 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
 
         println!("INFO gRPC Join request from node_id={} granted", node_id,);
 
+        // Add joining node to cluster state with its profile information
+        let joining_node = all4one_common::NodeInfo {
+            profile: all4one_common::NodeProfile {
+                id: all4one_common::NodeId(node_id),
+                tier: payload.tier as u8,
+                availability: String::new(),
+                quorum_participant: false,
+                resources: all4one_common::NodeResources {
+                    cpu_cores: 0,
+                    memory_mb: 0,
+                    disk_mb: None,
+                },
+                capabilities: all4one_common::NodeCapabilities {
+                    docker: false,
+                    python: None,
+                    java: None,
+                    wasm: false,
+                    gpu_enabled: false,
+                    storage_node: false,
+                },
+            },
+            status: all4one_common::NodeStatus::Online,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            grpc_endpoint: payload.grpc_endpoint.clone(),
+            rest_endpoint: payload.rest_endpoint.clone(),
+        };
+
+        // Upsert the joining node to the cluster state
+        println!(
+            "DEBUG [JOIN] Before insert: cluster has {} nodes",
+            self.state.cluster.read().await.nodes.len()
+        );
+
+        {
+            let mut cluster = self.state.cluster.write().await;
+            cluster
+                .nodes
+                .insert(joining_node.profile.id, joining_node.clone());
+            cluster.version = cluster.version.saturating_add(1);
+
+            println!(
+                "DEBUG [JOIN] After insert: cluster has {} nodes",
+                cluster.nodes.len()
+            );
+            println!(
+                "DEBUG [JOIN] Cluster now contains: {}",
+                cluster
+                    .nodes
+                    .values()
+                    .map(|n| format!("{} (tier={})", n.profile.id, n.profile.tier))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+
+        println!(
+            "INFO Cluster state updated: node {} (tier={}) added to cluster at {} / {}",
+            node_id, payload.tier, payload.grpc_endpoint, payload.rest_endpoint
+        );
+
         Ok(Response::new(proto::JoinResponse {
             node_cert_pem,
             node_key_pem,

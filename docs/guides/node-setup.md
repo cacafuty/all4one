@@ -42,6 +42,45 @@ shared_secret = "compose-secret"
 - Verify `GET /health`
 - Verify visibility in `GET /v1/nodes`
 
+## Local dry-run: 2 agents on one machine (no Docker)
+
+Use this as a preflight before multi-machine setup. It validates certificate enrollment and peer discovery with two native processes on different ports.
+
+- Bootstrap node (agent A): `deploy/compose/configs/agent-win-local-bootstrap-peerseed.toml`
+- Peer node (agent B): `deploy/compose/configs/agent-win-local-peer.toml`
+
+### Ports
+
+- Agent A: REST `7946`, gRPC `7947`
+- Agent B: REST `8946`, gRPC `8947`
+
+### Start agent A (bootstrap issuer)
+
+```powershell
+$env:ALL4ONE_ADVERTISE_HOST = "127.0.0.1"
+$env:ALL4ONE_ADVERTISE_GRPC_PORT = "7947"
+$env:ALL4ONE_ADVERTISE_REST_PORT = "7946"
+.\target\release\all4one-agent.exe start --config .\deploy\compose\configs\agent-win-local-bootstrap-peerseed.toml
+```
+
+### Start agent B (peer with pre-shared CA cert)
+
+```powershell
+$env:ALL4ONE_ADVERTISE_HOST = "127.0.0.1"
+$env:ALL4ONE_ADVERTISE_GRPC_PORT = "8947"
+$env:ALL4ONE_ADVERTISE_REST_PORT = "8946"
+.\target\release\all4one-agent.exe start --config .\deploy\compose\configs\agent-win-local-peer.toml
+```
+
+### Verify both nodes from both sides
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:7946/v1/internal/nodes" | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Uri "http://127.0.0.1:8946/v1/internal/nodes" | ConvertTo-Json -Depth 5
+```
+
+Expected result: both responses list 2 peers (agent A + agent B) as `online`.
+
 ## Steam Deck example: 3-container cluster + host agent + Steam Deck
 
 Use this topology when your base machine runs the three Phase 2 Docker agents **and** a fourth native agent, and you want to attach a Steam Deck on the same LAN as a fifth executor node.

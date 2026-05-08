@@ -8,7 +8,7 @@ pub struct SchedulingRequest {
 }
 
 pub fn pick_node(
-    local: &NodeInfo,
+    _local: &NodeInfo,
     cluster: &ClusterState,
     req: &SchedulingRequest,
 ) -> Option<NodeId> {
@@ -23,8 +23,8 @@ pub fn pick_node(
         return None;
     }
 
-    // Keep deterministic ordering, but prefer local execution when possible.
-    candidates.sort_by_key(|n| (n.profile.id != local.profile.id, n.profile.id.to_string()));
+    // Sort deterministically by ID; remove local bias to allow valid remote placement.
+    candidates.sort_by_key(|n| n.profile.id.to_string());
 
     for node in candidates {
         if !runtime_supported(node, req) {

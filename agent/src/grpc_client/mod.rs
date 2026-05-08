@@ -19,7 +19,7 @@ pub async fn request_join(
     node_id: Uuid,
     join_secret: Option<&str>,
 ) -> Result<EnrollmentBundle, tonic::Status> {
-    request_join_with_ca(endpoint, node_id, join_secret, None).await
+    request_join_with_ca(endpoint, node_id, join_secret, None, 1, "127.0.0.1", 9999, 9998).await
 }
 
 pub async fn request_join_with_ca(
@@ -27,6 +27,10 @@ pub async fn request_join_with_ca(
     node_id: Uuid,
     join_secret: Option<&str>,
     ca_cert_path: Option<&str>,
+    tier: u8,
+    advertise_host: &str,
+    advertise_grpc_port: u16,
+    advertise_rest_port: u16,
 ) -> Result<EnrollmentBundle, tonic::Status> {
     // Verify CA cert exists if specified (validates bootstrap authenticity)
     if let Some(ca_path) = ca_cert_path {
@@ -49,6 +53,9 @@ pub async fn request_join_with_ca(
             node_id: node_id.to_string(),
             csr_pem: String::new(),
             join_secret: join_secret.unwrap_or_default().to_string(),
+            tier: tier as u32,
+            grpc_endpoint: format!("{}:{}", advertise_host, advertise_grpc_port),
+            rest_endpoint: format!("{}:{}", advertise_host, advertise_rest_port),
         })
         .await?
         .into_inner();

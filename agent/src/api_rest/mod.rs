@@ -761,6 +761,7 @@ async fn get_internal_node(State(state): State<AppState>) -> Json<NodeInfo> {
 #[derive(Debug, Serialize)]
 struct PeerInfo {
     id: String,
+    tier: u8,
     grpc_endpoint: String,
     rest_endpoint: String,
     status: NodeStatus,
@@ -773,14 +774,27 @@ struct PeerListResponse {
 
 async fn get_internal_nodes(State(state): State<AppState>) -> Json<PeerListResponse> {
     let st = state.cluster.read().await;
+    
+    println!(
+        "DEBUG [/v1/internal/nodes] Cluster has {} nodes",
+        st.nodes.len()
+    );
+    
     let mut peers: Vec<PeerInfo> = st
         .nodes
         .values()
-        .map(|n| PeerInfo {
-            id: n.profile.id.to_string(),
-            grpc_endpoint: n.grpc_endpoint.clone(),
-            rest_endpoint: n.rest_endpoint.clone(),
-            status: n.status.clone(),
+        .map(|n| {
+            println!(
+                "DEBUG [/v1/internal/nodes] Node: id={} tier={} status={:?}",
+                n.profile.id, n.profile.tier, n.status
+            );
+            PeerInfo {
+                id: n.profile.id.to_string(),
+                tier: n.profile.tier,
+                grpc_endpoint: n.grpc_endpoint.clone(),
+                rest_endpoint: n.rest_endpoint.clone(),
+                status: n.status.clone(),
+            }
         })
         .collect();
     peers.sort_by_key(|p| p.id.clone());

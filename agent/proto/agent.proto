@@ -33,6 +33,9 @@ message JoinRequest {
   string node_id = 1;
   string csr_pem = 2;
   string join_secret = 3;
+  uint32 tier = 4;                    // Node tier for scheduling constraints
+  string grpc_endpoint = 5;           // gRPC service endpoint (host:port)
+  string rest_endpoint = 6;           // REST API endpoint (host:port)
 }
 
 message JoinResponse {

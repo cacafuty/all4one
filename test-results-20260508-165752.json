@@ -1,0 +1,174 @@
+{
+  "job_completions": [
+    {
+      "job_number": 1,
+      "status": "queued",
+      "assigned_node": null,
+      "exit_code": null,
+      "job_id": "b4096829-9268-43f8-832c-6054066d39b7"
+    },
+    {
+      "job_number": 2,
+      "status": "queued",
+      "assigned_node": null,
+      "exit_code": null,
+      "job_id": "5c55b71d-e67e-46ec-b7d8-e28140d3d536"
+    },
+    {
+      "job_number": 3,
+      "status": "queued",
+      "assigned_node": null,
+      "exit_code": null,
+      "job_id": "de7e5d54-0344-4d89-bf4c-a797021e13b8"
+    },
+    {
+      "job_number": 4,
+      "status": "queued",
+      "assigned_node": null,
+      "exit_code": null,
+      "job_id": "b7c7248e-0b9a-457c-8e0e-434a0c8f87ab"
+    },
+    {
+      "job_number": 5,
+      "status": "queued",
+      "assigned_node": null,
+      "exit_code": null,
+      "job_id": "f8642a22-5397-4466-ad15-214f5dd1957d"
+    },
+    {
+      "job_number": 6,
+      "status": "completed",
+      "assigned_node": null,
+      "exit_code": 0,
+      "job_id": "fc47873e-9842-4eec-a878-89dedc63948f"
+    },
+    {
+      "job_number": 7,
+      "status": "completed",
+      "assigned_node": null,
+      "exit_code": 0,
+      "job_id": "2d222bcd-b270-4bd3-b3a6-7b154530b615"
+    },
+    {
+      "job_number": 8,
+      "status": "completed",
+      "assigned_node": null,
+      "exit_code": 0,
+      "job_id": "3390d280-d23d-4583-926a-189e079f8316"
+    },
+    {
+      "job_number": 9,
+      "status": "completed",
+      "assigned_node": null,
+      "exit_code": 0,
+      "job_id": "ee294b78-7efe-4a74-a934-2c3f364b7ef5"
+    },
+    {
+      "job_number": 10,
+      "status": "completed",
+      "assigned_node": null,
+      "exit_code": 0,
+      "job_id": "f8ca6808-1282-4e9e-8a49-c6ffb35e0577"
+    }
+  ],
+  "total_failed": 0,
+  "system_checks": [
+    {
+      "name": "Agent A health",
+      "status": "PASS"
+    },
+    {
+      "name": "Agent B health",
+      "status": "PASS"
+    },
+    {
+      "name": "Agent A sees 2 peers",
+      "status": "PASS"
+    },
+    {
+      "name": "Agent B sees 2 peers",
+      "status": "PASS"
+    },
+    {
+      "name": "Peers have tier field in list",
+      "status": "PASS"
+    },
+    {
+      "name": "Peer certificate bundle exists",
+      "status": "PASS"
+    }
+  ],
+  "total_passed": 26,
+  "job_submissions": [
+    {
+      "job_number": 1,
+      "status": "queued",
+      "constraint": "tier_min=1",
+      "result": "PASS",
+      "job_id": "b4096829-9268-43f8-832c-6054066d39b7"
+    },
+    {
+      "job_number": 2,
+      "status": "queued",
+      "constraint": "tier_min=1",
+      "result": "PASS",
+      "job_id": "5c55b71d-e67e-46ec-b7d8-e28140d3d536"
+    },
+    {
+      "job_number": 3,
+      "status": "queued",
+      "constraint": "tier_min=1",
+      "result": "PASS",
+      "job_id": "de7e5d54-0344-4d89-bf4c-a797021e13b8"
+    },
+    {
+      "job_number": 4,
+      "status": "queued",
+      "constraint": "tier_min=1",
+      "result": "PASS",
+      "job_id": "b7c7248e-0b9a-457c-8e0e-434a0c8f87ab"
+    },
+    {
+      "job_number": 5,
+      "status": "queued",
+      "constraint": "tier_min=1",
+      "result": "PASS",
+      "job_id": "f8642a22-5397-4466-ad15-214f5dd1957d"
+    },
+    {
+      "job_number": 6,
+      "status": "queued",
+      "constraint": "tier_min=0",
+      "result": "PASS",
+      "job_id": "fc47873e-9842-4eec-a878-89dedc63948f"
+    },
+    {
+      "job_number": 7,
+      "status": "queued",
+      "constraint": "tier_min=0",
+      "result": "PASS",
+      "job_id": "2d222bcd-b270-4bd3-b3a6-7b154530b615"
+    },
+    {
+      "job_number": 8,
+      "status": "queued",
+      "constraint": "tier_min=0",
+      "result": "PASS",
+      "job_id": "3390d280-d23d-4583-926a-189e079f8316"
+    },
+    {
+      "job_number": 9,
+      "status": "queued",
+      "constraint": "tier_min=0",
+      "result": "PASS",
+      "job_id": "ee294b78-7efe-4a74-a934-2c3f364b7ef5"
+    },
+    {
+      "job_number": 10,
+      "status": "queued",
+      "constraint": "tier_min=0",
+      "result": "PASS",
+      "job_id": "f8ca6808-1282-4e9e-8a49-c6ffb35e0577"
+    }
+  ]
+}

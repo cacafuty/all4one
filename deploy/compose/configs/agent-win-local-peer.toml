@@ -1,0 +1,37 @@
+[node]
+tier = 1
+availability = "always"
+quorum_participant = false
+data_dir = "C:/ProgramData/all4one-local-peer"
+
+[roles]
+scheduler = false
+executor = true
+storage = false
+
+[network]
+bind_address = "0.0.0.0"
+grpc_port = 8947
+rest_port = 8946
+
+[discovery]
+mdns = false
+seeds = ["127.0.0.1:7947"]
+
+[security]
+mode = "dev"
+ca_cert_path = "C:/ProgramData/all4one-local/certs/ca.crt"
+
+[executor]
+max_concurrent_jobs = 2
+docker_socket = "npipe:////./pipe/docker_engine"
+cgroups_enabled = false
+
+[capabilities]
+docker = true
+python = "C:/Python311/python.exe"
+wasm = false
+
+[logging]
+level = "info"
+format = "text"

@@ -11,6 +11,7 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 struct PeerInfo {
     id: String,
+    tier: u8,
     grpc_endpoint: String,
     rest_endpoint: String,
 }
@@ -82,7 +83,7 @@ pub fn spawn_seed_discovery(
                         .or_insert_with(|| NodeInfo {
                             profile: all4one_common::NodeProfile {
                                 id,
-                                tier: 0,
+                                tier: peer.tier,
                                 availability: String::new(),
                                 quorum_participant: false,
                                 resources: all4one_common::NodeResources {
