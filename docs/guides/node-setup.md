@@ -32,7 +32,7 @@ mdns = true
 seeds = ["192.168.1.100:7947"]
 
 [security]
-mode = "dev"
+mode = "shared-secret"
 shared_secret = "compose-secret"
 ```
 
@@ -204,6 +204,10 @@ seeds = ["<HOST_IP>:7947"]
 [security]
 mode = "ca"
 ca_cert_path = "/home/deck/.local/share/all4one-steamdeck/certs/ca.crt"
+
+**Note on security modes:**
+- `mode = "ca"`: Certificate Authority-based enrollment (production-like, recommended for multi-node clusters)
+- `mode = "shared-secret"`: Shared secret authentication (dev/testing only)
 
 [executor]
 max_concurrent_jobs = 1

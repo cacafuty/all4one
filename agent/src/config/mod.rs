@@ -27,8 +27,8 @@ pub fn load(path: &str) -> Result<Arc<Config>> {
         return Err(anyhow!("node.tier must be 0, 1, or 2"));
     }
 
-    if parsed.security.mode != "dev" && parsed.security.mode != "prod" {
-        return Err(anyhow!("security.mode must be 'dev' or 'prod'"));
+    if parsed.security.mode != "shared-secret" && parsed.security.mode != "ca" {
+        return Err(anyhow!("security.mode must be 'shared-secret' or 'ca'"));
     }
 
     Ok(Arc::new(parsed))

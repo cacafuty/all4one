@@ -20,7 +20,7 @@ mdns = false
 seeds = ["127.0.0.1:8947"]
 
 [security]
-mode = "dev"
+mode = "ca"
 
 [executor]
 max_concurrent_jobs = 2

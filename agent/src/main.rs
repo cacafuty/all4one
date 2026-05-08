@@ -109,7 +109,7 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
         config.node.tier, config.roles.scheduler, config.roles.executor, config.roles.storage
     );
 
-    if config.security.mode == "dev" {
+    if config.security.mode == "shared-secret" {
         println!("WARN MODO DESARROLLO ACTIVO - no usar en produccion");
     }
 
@@ -188,7 +188,7 @@ async fn enroll_with_seed_ca(
     };
 
     for _attempt in 0..20 {
-        let join_secret = if config.security.mode == "dev" {
+        let join_secret = if config.security.mode == "shared-secret" {
             let secret = config.security.shared_secret.trim();
             if secret.is_empty() {
                 None

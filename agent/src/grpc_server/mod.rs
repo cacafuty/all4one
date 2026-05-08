@@ -120,7 +120,7 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
         // - Dev shared-secret mode: caller provides join_secret matching local config.
         let provided_join_secret = payload.join_secret.trim();
         if !provided_join_secret.is_empty() {
-            if self.state.config.security.mode != "dev" {
+            if self.state.config.security.mode != "shared-secret" {
                 return Err(Status::unauthenticated(
                     "join_secret enrollment is only allowed in dev mode",
                 ));

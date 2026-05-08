@@ -111,7 +111,7 @@ mod tests {
                 seeds: vec![],
             },
             security: SecurityConfig {
-                mode: "dev".to_string(),
+                mode: "shared-secret".to_string(),
                 shared_secret: "s".to_string(),
                 ca_cert_path: String::new(),
             },

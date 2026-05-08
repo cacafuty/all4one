@@ -19,7 +19,7 @@ mdns = false
 seeds = ["127.0.0.1:7947"]
 
 [security]
-mode = "dev"
+mode = "ca"
 ca_cert_path = "C:/ProgramData/all4one-local/certs/ca.crt"
 
 [executor]

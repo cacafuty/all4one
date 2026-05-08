@@ -1319,7 +1319,7 @@ async fn shared_secret_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    if state.config.security.mode != "dev" {
+    if state.config.security.mode != "shared-secret" {
         return next.run(request).await;
     }
 
