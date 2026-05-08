@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pre-push hook: Format, lint, and validate before pushing
+
+set -e
+
+echo "[pre-push] Running cargo fmt..."
+cargo fmt --all
+
+echo "[pre-push] Checking cargo fmt compliance..."
+cargo fmt --all -- --check || {
+    echo "[pre-push] FAIL: Formatting issues found. Run 'cargo fmt --all' and re-try."
+    exit 1
+}
+
+echo "[pre-push] Running cargo clippy (strict)..."
+cargo clippy --workspace --all-targets -- -D warnings || {
+    echo "[pre-push] FAIL: Clippy warnings found."
+    exit 1
+}
+
+echo "[pre-push] All checks passed."
+exit 0
