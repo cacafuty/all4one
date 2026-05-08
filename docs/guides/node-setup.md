@@ -81,39 +81,43 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8946/v1/internal/nodes" | ConvertTo-Jso
 
 Expected result: both responses list 2 peers (agent A + agent B) as `online`.
 
-## Steam Deck example: 3-container cluster + host agent + Steam Deck
+## Steam Deck example: Host agent + Steam Deck
 
-Use this topology when your base machine runs the three Phase 2 Docker agents **and** a fourth native agent, and you want to attach a Steam Deck on the same LAN as a fifth executor node.
+Use this topology for a simple two-node cluster: one agent on your host machine (Windows or Linux) and one on the Steam Deck. Both are executor nodes that discover each other via mTLS certificate enrollment.
 
-| Node | Where | Ports (REST / gRPC) | Role |
+| Node | Where | Ports (REST / gRPC) | Role | Tier |
+|---|---|---|---|---|
+| `agent-host` | Native on base machine (Windows/Linux) | `7946` / `7947` | executor, CA issuer | 0 |
+| `agent-deck` | Steam Deck on LAN | `7946` / `7947` | executor | 1 |
+
+- The host agent acts as the cluster bootstrap (CA issuer).
+- The Steam Deck agent enrolls via pre-shared CA certificate from the host.
+- Both nodes execute jobs and discover each other automatically.
+
+### Network topology & reachability
+
+**Important:** When the Steam Deck connects to the host agent, the host sees the Steam Deck's IP as the connection source. However, this does **not** guarantee the host can connect back to that same IP — the connection might be from a NAT, firewall, or VPN that only allows one-way traffic.
+
+**Solution:** Each node explicitly announces its reachable address via the `ALL4ONE_ADVERTISE_HOST` environment variable. During enrollment, the Steam Deck includes its advertised address in the join request (`grpc_endpoint` and `rest_endpoint` fields). The host stores these and uses them whenever it needs to contact the Steam Deck.
+
+| Scenario | Host sees IP | Host can connect back? | Solution |
 |---|---|---|---|
-| `agent-a` | Docker on base machine | `7946` / `7947` | storage, scheduler, quorum |
-| `agent-b` | Docker on base machine | `8946` / `8947` | storage, quorum |
-| `agent-c` | Docker on base machine | `9946` / `9947` | storage, quorum |
-| `agent-local` | Native process on base machine | `10946` / `10947` | executor (Windows/Linux host) |
-| `agent-deck` | Steam Deck on LAN | `7946` / `7947` | executor |
+| Both on same LAN | Steam Deck's private IP | ✅ Yes | Set `ALL4ONE_ADVERTISE_HOST` to LAN IP |
+| Steam Deck behind home router | Steam Deck's private IP (on router) or public IP | ❌ Likely not | Set `ALL4ONE_ADVERTISE_HOST` to routable address |
+| VPN or firewall between | Varies | ❌ Usually not | Use relay or bastion host |
 
-- Storage stays on the three Docker agents, each with its own isolated named volume.
-- The host agent and Steam Deck are Tier 2 executor-only nodes; they discover the cluster via a single seed.
+**Always set `ALL4ONE_ADVERTISE_HOST`** on every node to its externally-reachable address. This ensures the cluster can form bidirectional connections.
 
-### 1. Start the three Docker agents on the base machine
+### 1. Start the host agent as CA issuer
 
-```bash
-cd deploy/compose
-docker compose -f docker-compose.phase2.yml up --build -d
-docker compose -f docker-compose.phase2.yml ps
-```
-
-Record the LAN IP of the base machine as `<HOST_IP>`. All other nodes reach the Docker agents through this IP.
-
-### 2. Start the host agent directly on the base machine
-
-A pre-built config is included at `deploy/compose/configs/agent-win-local.toml` (works on Windows and Linux with minor path adjustments).
+Use the pre-built config at `deploy/compose/configs/agent-win-local.toml` on Windows (or equivalent on Linux).
 
 **Windows (PowerShell):**
 ```powershell
 $env:ALL4ONE_ADVERTISE_HOST = "<HOST_IP>"
-.\all4one-agent.exe start --config deploy\compose\configs\agent-win-local.toml
+$env:ALL4ONE_ADVERTISE_GRPC_PORT = "7947"
+$env:ALL4ONE_ADVERTISE_REST_PORT = "7946"
+.\target\release\all4one-agent.exe start --config .\deploy\compose\configs\agent-win-local.toml
 ```
 
 **Linux host:**
@@ -122,34 +126,62 @@ export ALL4ONE_ADVERTISE_HOST="<HOST_IP>"
 ./all4one-agent start --config deploy/compose/configs/agent-win-local.toml
 ```
 
-The host agent uses ports `10946` (REST) and `10947` (gRPC) to avoid collisions with the Docker containers. It seeds from `127.0.0.1:7947` (agent-a), which is enough to discover the full cluster.
+Expected output:
+```
+INFO Node ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+INFO Tier: 0 | Roles: scheduler=false executor=true storage=false
+INFO CA initialized at "/path/to/certs", ca.key perms: 0600
+INFO Certificate issuer ready (cluster bootstrap node)
+INFO REST API listening on 0.0.0.0:7946
+```
 
-### 3. Download the Linux x86-64 release binary on the Steam Deck
+Record the `<HOST_IP>` (the LAN IP used in `ALL4ONE_ADVERTISE_HOST`) — the Steam Deck will need it.
 
-The GitHub release includes a pre-built `all4one-agent` for Linux x86-64, which runs directly on SteamOS without needing Rust installed.
+### 2. Download the Linux x86-64 release on the Steam Deck
+
+The GitHub release includes a pre-built `all4one-agent` for Linux x86-64 (SteamOS 3+).
 
 ```bash
-# Replace X.Y.Z with the latest version (e.g. 0.1.7)
-VERSION="0.1.7"
+VERSION="0.1.8"
 mkdir -p "$HOME/bin"
 curl -L "https://github.com/cacafuty/all4one/releases/download/v${VERSION}/all4one-agent-linux-x86_64.tar.gz" \
      -o /tmp/all4one-agent.tar.gz
 tar -xzf /tmp/all4one-agent.tar.gz -C "$HOME/bin"
 chmod +x "$HOME/bin/all4one-agent"
 export PATH="$HOME/bin:$PATH"
-# Verify
 all4one-agent --version
+```
+
+### 3. Copy the host's CA certificate to Steam Deck
+
+The host has created a CA certificate at `C:/ProgramData/all4one-local/certs/ca.crt` (Windows) or `/var/lib/all4one/certs/ca.crt` (Linux). Copy this file to the Steam Deck so it can verify the host during enrollment.
+
+**On the host machine:**
+```powershell
+# Windows: CA cert is at
+cat C:/ProgramData/all4one-local/certs/ca.crt
+```
+
+**Transfer to Steam Deck (example via scp or manually):**
+```bash
+# On Steam Deck
+mkdir -p "$HOME/.local/share/all4one-steamdeck/certs"
+# Paste the host's ca.crt content into this file:
+nano "$HOME/.local/share/all4one-steamdeck/certs/ca.crt"
+```
+
+Or use `scp` if SSH is available:
+```bash
+scp user@<HOST_IP>:/path/to/ca.crt "$HOME/.local/share/all4one-steamdeck/certs/ca.crt"
 ```
 
 ### 4. Create a Steam Deck node config
 
-Choose the Steam Deck LAN IP and keep it as `<STEAM_DECK_IP>`.
+Create a config file at `$HOME/.config/all4one/steamdeck.toml`:
 
-```bash
-mkdir -p "$HOME/.config/all4one" "$HOME/.local/share/all4one-steamdeck"
-cat > "$HOME/.config/all4one/steamdeck.toml" << 'EOF'
+```toml
 [node]
-tier = 2
+tier = 1
 availability = "manual"
 quorum_participant = false
 data_dir = "/home/deck/.local/share/all4one-steamdeck"
@@ -166,17 +198,17 @@ grpc_port = 7947
 
 [discovery]
 mdns = false
-# Seed points to the host agent's gRPC port (10947 for agent-win-local).
-seeds = ["<HOST_IP>:10947"]
+# Seed points to the host agent's gRPC port
+seeds = ["<HOST_IP>:7947"]
 
 [security]
-mode = "dev"
-shared_secret = "compose-secret"
+mode = "ca"
+ca_cert_path = "/home/deck/.local/share/all4one-steamdeck/certs/ca.crt"
 
 [executor]
 max_concurrent_jobs = 1
 docker_socket = "/var/run/docker.sock"
-cgroups_enabled = true
+cgroups_enabled = false
 
 [capabilities]
 docker = false
@@ -189,11 +221,14 @@ format = "text"
 EOF
 ```
 
-Replace `<HOST_IP>` with the LAN IP of the base machine before starting the agent.
+Replace `<HOST_IP>` with your host's LAN IP (e.g., `192.168.1.100`).
 
-### 5. Start the Steam Deck node with its advertised IP
+**Critical:** Before starting, determine the Steam Deck's reachable IP address from the host's perspective. This is the value for `<STEAM_DECK_IP>` below. If you set `ALL4ONE_ADVERTISE_HOST` incorrectly:
+- The host will enroll the Steam Deck successfully (one-way connection works)
+- But the host won't be able to dispatch jobs to it (no bidirectional path)
+- Check with `ping <STEAM_DECK_IP>` from the host to verify reachability
 
-The other nodes must be able to dial back to the Steam Deck. Set `ALL4ONE_ADVERTISE_HOST` so the agent publishes its real LAN address instead of `0.0.0.0`.
+### 5. Start the Steam Deck agent
 
 ```bash
 export PATH="$HOME/bin:$PATH"
@@ -201,44 +236,73 @@ export ALL4ONE_ADVERTISE_HOST="<STEAM_DECK_IP>"
 all4one-agent start --config "$HOME/.config/all4one/steamdeck.toml"
 ```
 
-### 6. Verify the full 5-node cluster
-
-From any node (including Steam Deck):
-
-```bash
-curl -s http://127.0.0.1:7946/health
-curl -s -H "X-All4One-Secret: compose-secret" \
-    "http://<HOST_IP>:7946/v1/nodes" | python3 -m json.tool
+Expected output:
+```
+INFO Node ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+INFO Tier: 1 | Roles: scheduler=false executor=true storage=false
+INFO Verified CA cert at: /home/deck/.local/share/all4one-steamdeck/certs/ca.crt
+INFO gRPC Join request from node_id=... granted
+INFO Node certificates saved, node.key perms: 0600
+INFO Enrollment successful via seed=<HOST_IP>:7947 cert_expiry_unix=...
+INFO REST API listening on 0.0.0.0:7946
 ```
 
-Expected result: `"total": 5` with agent-a/b/c, the host agent, and the Steam Deck all listed.
+### 6. Verify the 2-node cluster
 
-### 7. Open the operational UI
+From the host:
+```powershell
+curl http://127.0.0.1:7946/v1/internal/nodes | ConvertFrom-Json | ConvertTo-Json
+```
 
-From any browser on the LAN:
+Or from Steam Deck:
+```bash
+curl http://127.0.0.1:7946/v1/internal/nodes | python3 -m json.tool
+```
 
-- `http://<HOST_IP>:7946/` — agent-a dashboard
-- `http://<HOST_IP>:8946/` — agent-b dashboard
-- `http://<HOST_IP>:9946/` — agent-c dashboard
-- `http://<HOST_IP>:10946/` — host agent dashboard
+Expected result: both endpoints list 2 peers (host + Steam Deck) as `online`.
 
-Use `compose-secret` in the secret field. Each dashboard shows the full 5-node topology.
+### 7. Test job dispatch
 
-### 8. Common failure points
+Submit a job from the host to the Steam Deck:
+```powershell
+$job = @{
+    runtime = "executable"
+    source = "bash"
+    command = @("-c", "echo 'Running on Steam Deck'")
+    resources = @{ cpu_cores = 1; memory_mb = 128 }
+    constraints = @{ tier_min = 1; requires_capabilities = @{ docker = $false } }
+} | ConvertTo-Json
 
-- If the Steam Deck never appears in `/v1/nodes`, re-check `ALL4ONE_ADVERTISE_HOST`.
-- If the host agent is missing, confirm `ALL4ONE_ADVERTISE_HOST` is set to the LAN IP (not `127.0.0.1`).
-- If Docker agents can't reach the Steam Deck or host agent, confirm ports `7947` and `10947` are not blocked by the local firewall.
+curl -X POST http://127.0.0.1:7946/v1/jobs `
+    -ContentType "application/json" `
+    -Body $job
+```
 
-### 9. Steam Deck-only execution checklist (Phase 2 + Phase 3)
+The job should be assigned to the Steam Deck (tier=1) and complete successfully.
 
-Use this section as a practical runbook for what to do from the Steam Deck after the base machine has the 3 Phase 2 Docker agents and the host agent running.
+### 8. Troubleshooting
 
-Before you start on Steam Deck:
+**Steam Deck never appears in `/v1/internal/nodes`:**
+  1. Verify `ALL4ONE_ADVERTISE_HOST` is set on the Steam Deck to its reachable IP
+  2. From the host, test: `ping <STEAM_DECK_IP>` and `nc -zv <STEAM_DECK_IP> 7947` (or `Test-NetConnection -ComputerName <STEAM_DECK_IP> -Port 7947` on Windows)
+  3. Check host agent logs for "Node discovered" or enrollment errors
+  4. If host sees the Steam Deck but can't reach its gRPC port, the advertised endpoint is unreachable
 
-- You know `<HOST_IP>` (base machine LAN IP).
-- Port `7947` on `<HOST_IP>` is reachable from the Steam Deck (agent-a seed).
-- You already replaced `<HOST_IP>` in your `steamdeck.toml` seeds.
+**Steam Deck appears in cluster but jobs won't dispatch to it:**
+  - This indicates enrollment succeeded (one-way connection from Steam Deck to host) but the host can't connect back to the Steam Deck
+  - Verify the Steam Deck's advertised address: `curl -s http://<STEAM_DECK_IP>:7946/v1/internal/nodes | grep grpc_endpoint`
+  - From the host, try to connect to that endpoint: `nc -zv <ENDPOINT_IP> <ENDPOINT_PORT>`
+  - If blocked, adjust `ALL4ONE_ADVERTISE_HOST` to a routable address or use a relay
+
+**Enrollment fails (CA verification error):**
+  - Confirm the CA certificate file exists: `ls -la /home/deck/.local/share/all4one-steamdeck/certs/ca.crt`
+  - Verify it matches the host's: `diff /path/to/host/ca.crt /home/deck/.local/share/all4one-steamdeck/certs/ca.crt`
+  - If different, re-copy the CA from the host to the Steam Deck
+
+**Ports blocked:**
+  - Ensure ports 7946 (REST) and 7947 (gRPC) are open on both machines
+  - Use `netstat -an | grep 7946` (Linux/macOS) or `Get-NetTCPConnection -LocalPort 7946` (Windows) to verify listening
+  - Check firewall: `sudo ufw status` (Linux) or Windows Defender Firewall rules
 
 ## Certificate-based enrollment (CA-only, no shared_secret)
 
