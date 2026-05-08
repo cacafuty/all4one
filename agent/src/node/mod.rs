@@ -102,6 +102,7 @@ mod tests {
             },
             network: NetworkConfig {
                 bind_address: "0.0.0.0".to_string(),
+                advertise_host: "127.0.0.1".to_string(),
                 grpc_port: 7947,
                 rest_port: 7946,
                 metrics_port: 9090,

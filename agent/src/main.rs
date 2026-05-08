@@ -70,7 +70,9 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .or_else(|| {
-            if config.network.bind_address == "0.0.0.0" {
+            if !config.network.advertise_host.is_empty() {
+                Some(config.network.advertise_host.clone())
+            } else if config.network.bind_address == "0.0.0.0" {
                 std::env::var("HOSTNAME").ok()
             } else {
                 Some(config.network.bind_address.clone())

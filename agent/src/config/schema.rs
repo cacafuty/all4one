@@ -35,6 +35,8 @@ pub struct RolesConfig {
 pub struct NetworkConfig {
     #[serde(default = "default_bind")]
     pub bind_address: String,
+    #[serde(default)]
+    pub advertise_host: String,
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
     #[serde(default = "default_rest_port")]

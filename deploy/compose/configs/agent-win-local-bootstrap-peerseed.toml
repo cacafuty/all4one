@@ -11,6 +11,7 @@ storage = false
 
 [network]
 bind_address = "0.0.0.0"
+advertise_host = "127.0.0.1"
 grpc_port = 7947
 rest_port = 7946
 

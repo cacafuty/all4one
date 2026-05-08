@@ -98,7 +98,18 @@ Use this topology for a simple two-node cluster: one agent on your host machine 
 
 **Important:** When the Steam Deck connects to the host agent, the host sees the Steam Deck's IP as the connection source. However, this does **not** guarantee the host can connect back to that same IP — the connection might be from a NAT, firewall, or VPN that only allows one-way traffic.
 
-**Solution:** Each node explicitly announces its reachable address via the `ALL4ONE_ADVERTISE_HOST` environment variable. During enrollment, the Steam Deck includes its advertised address in the join request (`grpc_endpoint` and `rest_endpoint` fields). The host stores these and uses them whenever it needs to contact the Steam Deck.
+**Solution:** Each node explicitly announces its reachable address via one of three methods:
+1. **Config file** (recommended): `[network] advertise_host = "192.168.1.50"`
+2. **Environment variable**: `ALL4ONE_ADVERTISE_HOST=192.168.1.50`
+3. **Auto-detection** (fallback): Uses `HOSTNAME` if `bind_address = 0.0.0.0`
+
+During enrollment, the node includes its advertised address in the join request. The host stores these and uses them whenever it needs to contact the node.
+
+**Priority order:**
+1. `ALL4ONE_ADVERTISE_HOST` environment variable (overrides everything)
+2. `network.advertise_host` config field
+3. `HOSTNAME` environment variable (if bind_address is 0.0.0.0)
+4. `network.bind_address` (fallback)
 
 | Scenario | Host sees IP | Host can connect back? | Solution |
 |---|---|---|---|
