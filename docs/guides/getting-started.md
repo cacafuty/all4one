@@ -155,6 +155,10 @@ shared_secret = "my-test-secret"
 max_concurrent_jobs = 8
 docker_socket = "/var/run/docker.sock"
 cgroups_enabled = true
+# Optional: Cap this agent's available memory for scheduling
+# If not set, the system's detected available memory is used
+# If set, the scheduler sees: min(system_available, memory_limit_mb)
+# memory_limit_mb = 2048
 
 [capabilities]
 docker = true
@@ -248,6 +252,8 @@ shared_secret = "my-test-secret"
 max_concurrent_jobs = 4
 docker_socket = "/var/run/docker.sock"
 cgroups_enabled = true
+# Optional: Limit tier 1 node to 1024 MB to reserve system resources
+# memory_limit_mb = 1024
 
 [capabilities]
 docker = true

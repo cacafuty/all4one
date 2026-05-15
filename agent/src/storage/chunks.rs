@@ -8,6 +8,11 @@ use zstd::Encoder as ZstdEncoder;
 
 use super::{ObjectMetadata, StoragePolicy};
 
+const ALL4ONE_MAGIC: &[u8; 4] = b"A4O1";
+const ALL4ONE_VERSION: u8 = 1;
+const ALL4ONE_CODEC_ZSTD: u8 = 1;
+const ALL4ONE_HEADER_LEN: usize = 4 + 1 + 1 + 8;
+
 /// Compute SHA256 hash of data
 pub fn sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -23,11 +28,45 @@ pub fn compress(data: &[u8], level: i32) -> Result<Vec<u8>> {
 
     let mut encoder = ZstdEncoder::new(Vec::new(), level)?;
     encoder.write_all(data)?;
-    Ok(encoder.finish()?)
+    let compressed = encoder.finish()?;
+
+    let mut wrapped = Vec::with_capacity(ALL4ONE_HEADER_LEN + compressed.len());
+    wrapped.extend_from_slice(ALL4ONE_MAGIC);
+    wrapped.push(ALL4ONE_VERSION);
+    wrapped.push(ALL4ONE_CODEC_ZSTD);
+    wrapped.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    wrapped.extend_from_slice(&compressed);
+    Ok(wrapped)
 }
 
 /// Decompress zstd data
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
+    // New format: all4one wrapper + codec payload.
+    if data.len() >= ALL4ONE_HEADER_LEN && &data[..4] == ALL4ONE_MAGIC {
+        let version = data[4];
+        let codec = data[5];
+        if version != ALL4ONE_VERSION {
+            return Err(anyhow!("Unsupported all4one compression version: {}", version));
+        }
+        if codec != ALL4ONE_CODEC_ZSTD {
+            return Err(anyhow!("Unsupported all4one codec: {}", codec));
+        }
+
+        let expected_len = u64::from_le_bytes(data[6..14].try_into().unwrap()) as usize;
+        let payload = &data[ALL4ONE_HEADER_LEN..];
+        let decompressed =
+            zstd::decode_all(payload).map_err(|e| anyhow!("Decompression failed: {}", e))?;
+        if decompressed.len() != expected_len {
+            return Err(anyhow!(
+                "all4one payload size mismatch: expected {}, got {}",
+                expected_len,
+                decompressed.len()
+            ));
+        }
+        return Ok(decompressed);
+    }
+
+    // Backward compatibility: plain zstd bytes written before all4one wrapping.
     zstd::decode_all(data).map_err(|e| anyhow!("Decompression failed: {}", e))
 }
 
@@ -99,6 +138,7 @@ pub async fn put_chunks(
     key: &str,
     data: &[u8],
     policy: StoragePolicy,
+    mark_access: bool,
 ) -> Result<ObjectMetadata> {
     let chunks_dir = data_dir.join("chunks").join(bucket);
     fs::create_dir_all(&chunks_dir)?;
@@ -141,6 +181,14 @@ pub async fn put_chunks(
 
     // Update index
     super::index::put_object(data_dir, bucket, key, &object_etag, data.len(), &policy).await?;
+    let last_accessed_at = if mark_access {
+        super::index::touch_object_access(data_dir, bucket, key)
+            .await
+            .ok()
+            .and_then(|m| m.last_accessed_at)
+    } else {
+        None
+    };
 
     Ok(ObjectMetadata {
         bucket: bucket.to_string(),
@@ -148,6 +196,7 @@ pub async fn put_chunks(
         size_bytes: data.len() as u64,
         created_at: Utc::now().to_rfc3339(),
         modified_at: Utc::now().to_rfc3339(),
+        last_accessed_at,
         etag: object_etag,
         policy: format!("{:?}", policy).to_lowercase(),
         replicas: policy.replicas(),
@@ -240,8 +289,21 @@ mod tests {
     fn test_compress_decompress() -> Result<()> {
         let original = b"hello world hello world hello world";
         let compressed = compress(original, 3)?;
+        assert!(compressed.starts_with(ALL4ONE_MAGIC));
         let decompressed = decompress(&compressed)?;
         assert_eq!(original.to_vec(), decompressed);
+        Ok(())
+    }
+
+    #[test]
+    fn test_decompress_legacy_zstd_payload() -> Result<()> {
+        let original = b"legacy-zstd-data";
+        let mut encoder = ZstdEncoder::new(Vec::new(), 3)?;
+        encoder.write_all(original)?;
+        let legacy = encoder.finish()?;
+
+        let decoded = decompress(&legacy)?;
+        assert_eq!(decoded, original);
         Ok(())
     }
 
@@ -287,6 +349,7 @@ mod tests {
             "test-key",
             data,
             StoragePolicy::Hot,
+            true,
         )
         .await?;
 
@@ -307,7 +370,8 @@ mod tests {
         let data = b"warm storage test with compression and erasure coding";
 
         let metadata =
-            put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Warm).await?;
+            put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Warm, true)
+                .await?;
 
         assert_eq!(metadata.policy, "warm");
         assert_eq!(metadata.replicas, 1);
@@ -322,7 +386,7 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let data = b"test data for corruption detection";
 
-        put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Hot).await?;
+        put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Hot, true).await?;
 
         // Corrupt the stored data
         let chunks_dir = temp_dir.path().join("chunks").join("bucket");

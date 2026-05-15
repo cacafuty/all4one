@@ -5,9 +5,9 @@ quorum_participant = false
 data_dir = "C:/ProgramData/all4one-local"
 
 [roles]
-scheduler = false
+scheduler = true
 executor = true
-storage = false
+storage = true
 
 [network]
 bind_address = "0.0.0.0"
@@ -27,6 +27,15 @@ mode = "ca"
 max_concurrent_jobs = 2
 docker_socket = "npipe:////./pipe/docker_engine"
 cgroups_enabled = false
+# Optional: Limit this agent to maximum 4096 MB RAM (even if system has more)
+# memory_limit_mb = 4096
+
+[shared_volume]
+enabled = true
+bucket = "shared-volume"
+local_dir = "C:/ProgramData/all4one-local/shared"
+policy = "warm"
+scan_interval_seconds = 2
 
 [capabilities]
 docker = true

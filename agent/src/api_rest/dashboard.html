@@ -352,6 +352,12 @@
             maxTimeline: 24,
             jobs: [],
             nodes: [],
+            storage: {
+                bucket: 'shared-volume',
+                objects: [],
+                error: '',
+                prefix: '',
+            },
             selectedJobId: '',
             selectedNodeId: '',
             filters: {
@@ -428,8 +434,22 @@
                     apiGet('/v1/jobs'),
                 ]);
 
+                let storageObjects = [];
+                let storageError = '';
+                try {
+                    const bucket = encodeURIComponent(appState.storage.bucket);
+                    const prefix = appState.storage.prefix.trim();
+                    const prefixQuery = prefix ? ('?prefix=' + encodeURIComponent(prefix)) : '';
+                    const storageData = await apiGet('/v1/storage-explorer/' + bucket + prefixQuery);
+                    storageObjects = storageData.objects || [];
+                } catch (storageErr) {
+                    storageError = String(storageErr.message || storageErr);
+                }
+
                 appState.nodes = nodes.nodes || [];
                 appState.jobs = jobs.jobs || [];
+                appState.storage.objects = storageObjects;
+                appState.storage.error = storageError;
                 render(diagnostics, nodes, jobs);
             } catch (err) {
                 setPulse('bad', 'Could not reach protected APIs. Check secret/header and node health.');
@@ -521,6 +541,25 @@
             refreshData();
         }
 
+        function setStoragePrefix(value) {
+            appState.storage.prefix = value || '';
+            refreshData();
+        }
+
+        function storageDownloadUrl(bucket, key) {
+            const keyPath = String(key || '')
+                .split('/')
+                .filter(Boolean)
+                .map(encodeURIComponent)
+                .join('/');
+            let url = '/v1/storage/' + encodeURIComponent(bucket) + '/' + keyPath;
+            const secret = localStorage.getItem('all4one_secret') || '';
+            if (secret) {
+                url += '?secret=' + encodeURIComponent(secret);
+            }
+            return url;
+        }
+
         function render(d, nodes, jobs) {
             const counts = jobCounts(jobs);
             const syncOk = !!d.distributed_state.cluster_synchronized;
@@ -595,6 +634,24 @@
                 }))
                 .join('');
 
+            const storageRows = (appState.storage.objects || []).slice(0, 60).map(obj => {
+                const key = String(obj.key || '');
+                const size = obj.size_bytes != null ? obj.size_bytes : '-';
+                const policy = String(obj.policy || '-');
+                const accessed = obj.last_accessed_at ? new Date(obj.last_accessed_at).toLocaleString() : '-';
+                const localFlag = obj.local_present ? 'local' : 'remote-only';
+                const availability = Array.isArray(obj.available_on) && obj.available_on.length
+                    ? obj.available_on.join(', ')
+                    : '-';
+                const href = storageDownloadUrl(appState.storage.bucket, key);
+                return '<li class="row">'
+                    + '<div><div><strong>' + key + '</strong></div>'
+                    + '<div class="mono">size=' + size + ' bytes | policy=' + policy + ' | presence=' + localFlag + ' | last_access=' + accessed + '</div>'
+                    + '<div class="mono">available_on=' + availability + '</div></div>'
+                    + '<div><a class="btn-link" href="' + href + '" download>Download</a></div>'
+                    + '</li>';
+            }).join('');
+
             const content = ''
                 + '<article class="card span-4">'
                 + '<h2>Cluster Pulse</h2>'
@@ -659,6 +716,19 @@
 
                 + '<article class="card span-4">'
                 + '<h2>Selected Job</h2>' + jobDetail
+                + '</article>'
+
+                + '<article class="card span-12">'
+                + '<h2>Shared Volume Explorer</h2>'
+                + '<div class="toolbar">'
+                + '<input placeholder="prefix filter (optional)" value="' + appState.storage.prefix + '" onchange="setStoragePrefix(this.value)" />'
+                + '<button class="btn-link" onclick="refreshData()">Reload</button>'
+                + '</div>'
+                + (appState.storage.error
+                    ? '<p class="empty">Storage unavailable on this node: ' + appState.storage.error + '</p>'
+                    : (storageRows
+                        ? '<ul class="job-list">' + storageRows + '</ul>'
+                        : '<p class="empty">No objects found in bucket ' + appState.storage.bucket + '.</p>'))
                 + '</article>'
 
                 + '<article class="card span-12">'

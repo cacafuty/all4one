@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use chrono::Utc;
 use serde_json;
 use sled::{Db, Tree};
 use std::collections::HashMap;
@@ -61,12 +62,24 @@ pub async fn put_object(
     let db = get_db(data_dir)?;
     let tree = get_bucket_tree(&db, bucket)?;
 
+    let existing = tree
+        .get(key.as_bytes())?
+        .and_then(|v| serde_json::from_slice::<ObjectMetadata>(&v).ok());
+
+    let now = Utc::now().to_rfc3339();
+    let created_at = existing
+        .as_ref()
+        .map(|m| m.created_at.clone())
+        .unwrap_or_else(|| now.clone());
+    let last_accessed_at = existing.and_then(|m| m.last_accessed_at);
+
     let metadata = ObjectMetadata {
         bucket: bucket.to_string(),
         key: key.to_string(),
         size_bytes: size_bytes as u64,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        modified_at: chrono::Utc::now().to_rfc3339(),
+        created_at,
+        modified_at: now,
+        last_accessed_at,
         etag: etag.to_string(),
         policy: format!("{:?}", policy).to_lowercase(),
         replicas: policy.replicas(),
@@ -76,6 +89,28 @@ pub async fn put_object(
     tree.insert(key.as_bytes(), json.as_bytes())?;
 
     Ok(())
+}
+
+/// Update the last-access timestamp for an object and return updated metadata.
+pub async fn touch_object_access(
+    data_dir: &Path,
+    bucket: &str,
+    key: &str,
+) -> Result<ObjectMetadata> {
+    let db = get_db(data_dir)?;
+    let tree = get_bucket_tree(&db, bucket)?;
+
+    let data = tree
+        .get(key.as_bytes())?
+        .ok_or_else(|| anyhow!("Object not found: {}/{}", bucket, key))?;
+
+    let mut metadata: ObjectMetadata = serde_json::from_slice(&data)?;
+    metadata.last_accessed_at = Some(Utc::now().to_rfc3339());
+    metadata.modified_at = Utc::now().to_rfc3339();
+
+    let json = serde_json::to_string(&metadata)?;
+    tree.insert(key.as_bytes(), json.as_bytes())?;
+    Ok(metadata)
 }
 
 /// Get object metadata

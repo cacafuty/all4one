@@ -6,6 +6,7 @@ pub mod index;
 pub mod placement;
 
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
@@ -70,10 +71,14 @@ pub struct ObjectMetadata {
     pub size_bytes: u64,
     pub created_at: String,
     pub modified_at: String,
+    #[serde(default)]
+    pub last_accessed_at: Option<String>,
     pub etag: String,
     pub policy: String, // "hot", "warm", "cold", "archive"
     pub replicas: usize,
 }
+
+const RECENT_ACCESS_WINDOW_HOURS: i64 = 24;
 
 /// Initialize storage system with given data directory
 pub async fn init_storage(data_dir: impl AsRef<Path>) -> Result<()> {
@@ -90,7 +95,61 @@ pub async fn put_object(
     policy: StoragePolicy,
 ) -> Result<ObjectMetadata> {
     let data_dir = data_dir.as_ref();
-    chunks::put_chunks(data_dir, bucket, key, data, policy).await
+    chunks::put_chunks(data_dir, bucket, key, data, policy, true).await
+}
+
+/// Store an object replica without marking local access.
+pub async fn put_object_replica(
+    data_dir: impl AsRef<Path>,
+    bucket: &str,
+    key: &str,
+    data: &[u8],
+    policy: StoragePolicy,
+) -> Result<ObjectMetadata> {
+    let data_dir = data_dir.as_ref();
+    chunks::put_chunks(data_dir, bucket, key, data, policy, false).await
+}
+
+/// Resolve the effective local compression policy from the caller requested policy
+/// and this node's last access timestamp for the object.
+pub async fn resolve_effective_policy(
+    data_dir: impl AsRef<Path>,
+    bucket: &str,
+    key: &str,
+    requested: StoragePolicy,
+) -> StoragePolicy {
+    let data_dir = data_dir.as_ref();
+
+    let Ok(metadata) = index::get_object(data_dir, bucket, key).await else {
+        return StoragePolicy::Archive;
+    };
+
+    let is_recent = metadata
+        .last_accessed_at
+        .as_deref()
+        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
+        .map(|ts| {
+            Utc::now().signed_duration_since(ts.with_timezone(&Utc))
+                <= Duration::hours(RECENT_ACCESS_WINDOW_HOURS)
+        })
+        .unwrap_or(false);
+
+    if is_recent {
+        requested
+    } else {
+        StoragePolicy::Archive
+    }
+}
+
+/// Mark this object as recently accessed by this storage node.
+pub async fn mark_object_accessed(
+    data_dir: impl AsRef<Path>,
+    bucket: &str,
+    key: &str,
+) -> Result<()> {
+    let data_dir = data_dir.as_ref();
+    let _ = index::touch_object_access(data_dir, bucket, key).await?;
+    Ok(())
 }
 
 /// Retrieve object chunks

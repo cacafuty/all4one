@@ -105,6 +105,12 @@ Use this topology for a simple two-node cluster: one agent on your host machine 
 
 During enrollment, the node includes its advertised address in the join request. The host stores these and uses them whenever it needs to contact the node.
 
+After enrollment, non-bootstrap nodes periodically re-announce themselves to configured seeds. This allows a restarted host to rediscover already-enrolled peers automatically, without manually re-adding nodes.
+
+Any reachable cluster node can now accept these presence announcements, so entry is no longer tied to a single "important" node once certificates are already provisioned.
+
+Each node also persists known peer gRPC endpoints in its data directory (`known-seeds.txt`). On restart, discovery and rejoin use the union of configured `discovery.seeds` and persisted known peers, so nodes can reconnect even when the original bootstrap seeds are unavailable.
+
 **Priority order:**
 1. `ALL4ONE_ADVERTISE_HOST` environment variable (overrides everything)
 2. `network.advertise_host` config field

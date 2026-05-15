@@ -8,6 +8,7 @@ use all4one_common::{
     Runtime,
 };
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
@@ -16,10 +17,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use futures_util::StreamExt;
+use futures_util::{future::join_all, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
@@ -66,12 +68,25 @@ struct HealthResponse {
 #[derive(Debug, Serialize)]
 struct NodesResponse {
     nodes: Vec<NodeInfo>,
+    telemetry: Vec<NodeTelemetry>,
     total: usize,
     online: usize,
     offline: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
+struct NodeTelemetry {
+    node_id: String,
+    idle: bool,
+    running_jobs: usize,
+    queued_jobs: usize,
+    estimated_used_memory_mb: u64,
+    estimated_free_memory_mb: u64,
+    last_seen_ms_ago: Option<u64>,
+    telemetry_fresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct JobRecord {
     pub(crate) job_id: JobId,
     pub(crate) status: JobStatus,
@@ -79,10 +94,29 @@ pub(crate) struct JobRecord {
     pub(crate) runtime: Runtime,
     pub(crate) source: String,
     pub(crate) command: Vec<String>,
+    pub(crate) resources: JobResources,
+    pub(crate) tier_min: u8,
+    pub(crate) require_docker: bool,
+    #[serde(default)]
+    pub(crate) retry_count: u8,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u8,
+    #[serde(default)]
+    pub(crate) attempted_nodes: Vec<NodeId>,
+    #[serde(default = "default_true")]
+    pub(crate) cluster_retry_enabled: bool,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
     pub(crate) exit_code: Option<i32>,
     pub(crate) error: Option<String>,
+}
+
+fn default_max_retries() -> u8 {
+    2
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -118,7 +152,7 @@ pub struct SubmitJobResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ListJobsResponse {
     jobs: Vec<JobRecord>,
     total: usize,
@@ -129,6 +163,14 @@ struct ListJobsQuery {
     status: Option<String>,
     node_id: Option<String>,
     limit: Option<usize>,
+    #[serde(default)]
+    local_only: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GetJobQuery {
+    #[serde(default)]
+    local_only: bool,
 }
 
 /// Storage health diagnostics
@@ -160,6 +202,7 @@ struct EnhancedClusterStatus {
     node_roles: NodeRolesInfo,
     uptime_seconds: u64,
     cluster_info: ClusterInfo,
+    node_telemetry: Vec<NodeTelemetry>,
     storage_health: Option<StorageHealth>,
     distributed_state: DistributedStateHealth,
 }
@@ -189,7 +232,11 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
     );
     let listener = TcpListener::bind(&addr).await?;
     println!("INFO REST API listening on {addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -208,6 +255,7 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/storage/:bucket",
             get(list_bucket_objects).post(create_bucket),
         )
+        .route("/v1/storage-explorer/:bucket", get(list_bucket_objects_explorer))
         .route(
             "/v1/storage/:bucket/*key",
             get(get_object_handler)
@@ -288,6 +336,7 @@ async fn cluster_status(State(state): State<AppState>) -> Json<ClusterStatus> {
 
 async fn cluster_diagnostics(State(state): State<AppState>) -> Json<EnhancedClusterStatus> {
     let cluster = state.cluster.read().await;
+    let nodes: Vec<NodeInfo> = cluster.nodes.values().cloned().collect();
 
     let (raft_leader, raft_term, cluster_synchronized) = if let Some(ref raft) = state.raft {
         let m = raft.current_metrics();
@@ -311,6 +360,7 @@ async fn cluster_diagnostics(State(state): State<AppState>) -> Json<EnhancedClus
     } else {
         None
     };
+    let node_telemetry = build_node_telemetry(&state, &nodes).await;
 
     Json(EnhancedClusterStatus {
         node_id: state.node_id.to_string(),
@@ -328,6 +378,7 @@ async fn cluster_diagnostics(State(state): State<AppState>) -> Json<EnhancedClus
             quorum_participant: state.config.node.quorum_participant,
             quorum_healthy: raft_leader.is_some(),
         },
+        node_telemetry,
         storage_health,
         distributed_state: DistributedStateHealth {
             raft_enabled: state.raft.is_some(),
@@ -392,6 +443,21 @@ struct StorageErrorResponse {
 struct ListObjectsQuery {
     prefix: Option<String>,
     max_keys: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct StorageExplorerObject {
+    key: String,
+    size_bytes: u64,
+    policy: String,
+    last_accessed_at: Option<String>,
+    local_present: bool,
+    available_on: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StorageListResponse {
+    objects: Vec<crate::storage::ObjectMetadata>,
 }
 
 // ── Storage handlers ─────────────────────────────────────────────────────────
@@ -460,6 +526,160 @@ async fn list_bucket_objects(
     }
 }
 
+/// GET /v1/storage-explorer/:bucket  — list objects aggregated from local node and peers
+async fn list_bucket_objects_explorer(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+    Query(params): Query<ListObjectsQuery>,
+) -> impl IntoResponse {
+    if !state.config.roles.storage {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(StorageErrorResponse {
+                error: "This node does not have the storage role".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    let data_dir = &state.config.node.data_dir;
+    let local_rest = state.local_node.rest_endpoint.clone();
+    let mut merged: HashMap<String, StorageExplorerObject> = HashMap::new();
+
+    let local_objects = match crate::storage::list_objects(
+        data_dir,
+        &bucket,
+        params.prefix.as_deref(),
+        params.max_keys,
+    )
+    .await
+    {
+        Ok(objects) => objects,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StorageErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    for obj in local_objects {
+        merged.insert(
+            obj.key.clone(),
+            StorageExplorerObject {
+                key: obj.key,
+                size_bytes: obj.size_bytes,
+                policy: obj.policy,
+                last_accessed_at: obj.last_accessed_at,
+                local_present: true,
+                available_on: vec![local_rest.clone()],
+            },
+        );
+    }
+
+    let peers: Vec<String> = {
+        let cluster = state.cluster.read().await;
+        cluster
+            .nodes
+            .values()
+            .filter(|n| n.profile.id != state.node_id)
+            .filter(|n| n.status == NodeStatus::Online)
+            .map(|n| n.rest_endpoint.clone())
+            .collect()
+    };
+
+    let secret = if state.config.security.mode == "shared-secret" {
+        let s = state.config.security.shared_secret.trim();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    } else {
+        None
+    };
+
+    let client = reqwest::Client::new();
+    let bucket_name = bucket.clone();
+    let prefix = params.prefix.clone();
+    let max_keys = params.max_keys;
+
+    let peer_calls = peers.iter().map(|endpoint| {
+        let client = client.clone();
+        let bucket_name = bucket_name.clone();
+        let prefix = prefix.clone();
+        let secret = secret.clone();
+        async move {
+            let url = format!("http://{}/v1/storage/{}", endpoint, bucket_name);
+            let mut request = client.get(url);
+            if let Some(prefix) = prefix {
+                if !prefix.is_empty() {
+                    request = request.query(&[("prefix", prefix)]);
+                }
+            }
+            if let Some(limit) = max_keys {
+                request = request.query(&[("max_keys", limit)]);
+            }
+            if let Some(secret) = secret {
+                request = request.header("X-All4One-Secret", secret);
+            }
+
+            let Ok(response) = request.send().await else {
+                return None;
+            };
+            if !response.status().is_success() {
+                return None;
+            }
+
+            let Ok(body) = response.json::<StorageListResponse>().await else {
+                return None;
+            };
+
+            Some((endpoint, body.objects))
+        }
+    });
+
+    let mut peers_reached = 0usize;
+    for hit in join_all(peer_calls).await {
+        let Some((endpoint, objects)) = hit else {
+            continue;
+        };
+        peers_reached += 1;
+        for obj in objects {
+            let entry = merged.entry(obj.key.clone()).or_insert(StorageExplorerObject {
+                key: obj.key.clone(),
+                size_bytes: obj.size_bytes,
+                policy: obj.policy.clone(),
+                last_accessed_at: obj.last_accessed_at.clone(),
+                local_present: false,
+                available_on: Vec::new(),
+            });
+
+            if entry.last_accessed_at.is_none() {
+                entry.last_accessed_at = obj.last_accessed_at;
+            }
+            if !entry.available_on.iter().any(|v| v == endpoint) {
+                entry.available_on.push(endpoint.clone());
+            }
+        }
+    }
+
+    let mut objects: Vec<StorageExplorerObject> = merged.into_values().collect();
+    objects.sort_by(|a, b| a.key.cmp(&b.key));
+
+    Json(serde_json::json!({
+        "bucket": bucket,
+        "objects": objects,
+        "count": objects.len(),
+        "peers_queried": peers.len(),
+        "peers_reached": peers_reached
+    }))
+    .into_response()
+}
+
 /// PUT /v1/storage/:bucket/*key  — upload an object
 /// Header: X-All4One-Policy = hot | warm | cold | archive  (default: warm)
 async fn put_object_handler(
@@ -490,11 +710,23 @@ async fn put_object_handler(
     };
 
     let data_dir = &state.config.node.data_dir;
+    let is_replica_sync = headers
+        .get("x-all4one-replication-hop")
+        .is_some();
+    let effective_policy = if is_replica_sync {
+        crate::storage::StoragePolicy::Archive
+    } else {
+        crate::storage::resolve_effective_policy(data_dir, &bucket, &key, policy).await
+    };
 
     // Ensure bucket exists
     let _ = crate::storage::index::create_bucket(std::path::Path::new(data_dir), &bucket).await;
 
-    let meta = match crate::storage::put_object(data_dir, &bucket, &key, &body, policy).await {
+    let mut meta = match if is_replica_sync {
+        crate::storage::put_object_replica(data_dir, &bucket, &key, &body, effective_policy).await
+    } else {
+        crate::storage::put_object(data_dir, &bucket, &key, &body, effective_policy).await
+    } {
         Ok(m) => m,
         Err(e) => {
             return (
@@ -508,18 +740,37 @@ async fn put_object_handler(
     };
 
     // Fan-out shards to peer storage nodes asynchronously (fire-and-forget)
-    {
+    if !is_replica_sync {
         let cluster = state.cluster.read().await;
-        let peers: Vec<String> = cluster
+        let mut candidates: Vec<(u8, String, String, String)> = cluster
             .nodes
             .values()
             .filter(|n| {
-                n.profile.capabilities.storage_node
-                    && n.status == all4one_common::NodeStatus::Online
+                n.status == all4one_common::NodeStatus::Online
                     && n.profile.id != state.node_id
             })
-            .map(|n| n.grpc_endpoint.clone())
+            .map(|n| {
+                (
+                    n.profile.tier,
+                    n.profile.id.to_string(),
+                    n.grpc_endpoint.clone(),
+                    n.rest_endpoint.clone(),
+                )
+            })
             .collect();
+
+        // Prefer tier-0 storage sites first, then deterministic by node id.
+        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        let desired_sites = 3usize;
+        let desired_peer_replicas = desired_sites.saturating_sub(1);
+        let peers: Vec<(String, String)> = candidates
+            .into_iter()
+            .take(desired_peer_replicas)
+            .map(|(_, _, grpc_endpoint, rest_endpoint)| (grpc_endpoint, rest_endpoint))
+            .collect();
+
+        meta.replicas = peers.len() + 1;
         drop(cluster);
 
         if !peers.is_empty() {
@@ -530,12 +781,15 @@ async fn put_object_handler(
             let policy_str = meta_clone.policy.clone();
             let etag = meta_clone.etag.clone();
             let size = meta_clone.size_bytes;
+            let body_clone = body.to_vec();
+            let rest_targets: Vec<String> = peers.iter().map(|(_, rest)| rest.clone()).collect();
+            let grpc_targets: Vec<String> = peers.iter().map(|(grpc, _)| grpc.clone()).collect();
 
             tokio::spawn(async move {
                 match crate::storage::read_shards(&data_dir_clone, &bucket_clone, &key_clone).await
                 {
                     Ok(shards) => {
-                        for peer in &peers {
+                        for peer in &grpc_targets {
                             for (idx, hash, data) in &shards {
                                 if let Err(e) = crate::grpc_client::transfer_chunk(
                                     peer,
@@ -557,6 +811,47 @@ async fn put_object_handler(
                                 }
                             }
                         }
+
+                        // Replicate an archive-compressed copy to selected peers so nodes
+                        // that have never used the file keep a disk-efficient representation.
+                        let client = reqwest::Client::new();
+                        let tasks = rest_targets.into_iter().map(|endpoint| {
+                            let client = client.clone();
+                            let bucket = bucket_clone.clone();
+                            let key = key_clone.clone();
+                            let payload = body_clone.clone();
+                            async move {
+                                let base = if endpoint.starts_with("http://")
+                                    || endpoint.starts_with("https://")
+                                {
+                                    endpoint
+                                } else {
+                                    format!("http://{endpoint}")
+                                };
+
+                                let url = format!(
+                                    "{}/v1/storage/{}/{}",
+                                    base.trim_end_matches('/'),
+                                    bucket,
+                                    key
+                                );
+
+                                if let Err(e) = client
+                                    .put(url)
+                                    .header("x-all4one-policy", "archive")
+                                    .header("x-all4one-replication-hop", "1")
+                                    .body(payload)
+                                    .send()
+                                    .await
+                                {
+                                    println!(
+                                        "WARN archive replication PUT failed endpoint={} err={}",
+                                        base, e
+                                    );
+                                }
+                            }
+                        });
+                        let _ = join_all(tasks).await;
                     }
                     Err(e) => {
                         println!("WARN read_shards failed for distribution: {}", e);
@@ -567,6 +862,52 @@ async fn put_object_handler(
     }
 
     (StatusCode::CREATED, Json(meta)).into_response()
+}
+
+async fn fetch_object_from_peers(
+    rest_endpoints: Vec<String>,
+    bucket: &str,
+    key: &str,
+) -> Option<(Vec<u8>, String)> {
+    if rest_endpoints.is_empty() {
+        return None;
+    }
+
+    let client = reqwest::Client::new();
+    let tasks = rest_endpoints.into_iter().map(|endpoint| {
+        let client = client.clone();
+        let bucket = bucket.to_string();
+        let key = key.to_string();
+        async move {
+            let base = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+                endpoint
+            } else {
+                format!("http://{endpoint}")
+            };
+            let url = format!("{}/v1/storage/{}/{}", base.trim_end_matches('/'), bucket, key);
+
+            let Ok(resp) = client.get(&url).send().await else {
+                return None;
+            };
+            if !resp.status().is_success() {
+                return None;
+            }
+
+            let etag = resp
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let Ok(bytes) = resp.bytes().await else {
+                return None;
+            };
+
+            Some((bytes.to_vec(), etag))
+        }
+    });
+
+    join_all(tasks).await.into_iter().flatten().next()
 }
 
 /// GET /v1/storage/:bucket/*key  — download an object
@@ -587,6 +928,7 @@ async fn get_object_handler(
     let data_dir = &state.config.node.data_dir;
     match crate::storage::get_object(data_dir, &bucket, &key).await {
         Ok(data) => {
+            let _ = crate::storage::mark_object_accessed(data_dir, &bucket, &key).await;
             let etag =
                 crate::storage::index::get_object(std::path::Path::new(data_dir), &bucket, &key)
                     .await
@@ -603,6 +945,38 @@ async fn get_object_handler(
         }
         Err(e) => {
             let msg = e.to_string();
+            let peers: Vec<String> = {
+                let cluster = state.cluster.read().await;
+                cluster
+                    .nodes
+                    .values()
+                    .filter(|n| {
+                        n.status == all4one_common::NodeStatus::Online && n.profile.id != state.node_id
+                    })
+                    .map(|n| n.rest_endpoint.clone())
+                    .collect()
+            };
+
+            if let Some((remote_data, remote_etag)) = fetch_object_from_peers(peers, &bucket, &key).await {
+                let _ = crate::storage::put_object(
+                    data_dir,
+                    &bucket,
+                    &key,
+                    &remote_data,
+                    crate::storage::StoragePolicy::Warm,
+                )
+                .await;
+                let _ = crate::storage::mark_object_accessed(data_dir, &bucket, &key).await;
+
+                return axum::http::Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/octet-stream")
+                    .header("ETag", remote_etag)
+                    .body(Body::from(remote_data))
+                    .unwrap()
+                    .into_response();
+            }
+
             if msg.contains("not found") || msg.contains("Object not found") {
                 (
                     StatusCode::NOT_FOUND,
@@ -772,7 +1146,49 @@ struct PeerListResponse {
     peers: Vec<PeerInfo>,
 }
 
-async fn get_internal_nodes(State(state): State<AppState>) -> Json<PeerListResponse> {
+async fn get_internal_nodes(
+    State(state): State<AppState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+) -> Json<PeerListResponse> {
+    if !remote.ip().is_loopback() {
+        let state_clone = state.clone();
+        let remote_ip = remote.ip().to_string();
+        tokio::spawn(async move {
+            let rest_probe = format!(
+                "http://{}:{}/v1/internal/node",
+                remote_ip, state_clone.config.network.rest_port
+            );
+            let Ok(response) = reqwest::get(&rest_probe).await else {
+                return;
+            };
+            if !response.status().is_success() {
+                return;
+            }
+            let Ok(node) = response.json::<NodeInfo>().await else {
+                return;
+            };
+            if node.profile.id == state_clone.node_id {
+                return;
+            }
+
+            crate::discovery::remember_known_seed(
+                &state_clone.config.node.data_dir,
+                &node.grpc_endpoint,
+            );
+
+            {
+                let mut cluster = state_clone.cluster.write().await;
+                cluster.nodes.insert(node.profile.id, node.clone());
+                cluster.version = cluster.version.saturating_add(1);
+            }
+            state_clone
+                .last_seen
+                .write()
+                .await
+                .insert(node.profile.id, tokio::time::Instant::now());
+        });
+    }
+
     let st = state.cluster.read().await;
 
     println!(
@@ -804,6 +1220,11 @@ async fn get_internal_nodes(State(state): State<AppState>) -> Json<PeerListRespo
 async fn get_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
     let st = state.cluster.read().await;
     let mut nodes: Vec<NodeInfo> = st.nodes.values().cloned().collect();
+    let total = nodes.len();
+    drop(st);
+
+    let telemetry = build_node_telemetry(&state, &nodes).await;
+
     nodes.sort_by_key(|n| n.profile.id.to_string());
     let online = nodes
         .iter()
@@ -815,11 +1236,56 @@ async fn get_nodes(State(state): State<AppState>) -> Json<NodesResponse> {
         .count();
 
     Json(NodesResponse {
-        total: nodes.len(),
+        total,
         online,
         offline,
+        telemetry,
         nodes,
     })
+}
+
+async fn build_node_telemetry(state: &AppState, nodes: &[NodeInfo]) -> Vec<NodeTelemetry> {
+    let jobs = state.jobs.read().await;
+    let last_seen = state.last_seen.read().await;
+
+    let mut telemetry = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let running_jobs = jobs
+            .values()
+            .filter(|j| j.assigned_to == node.profile.id && j.status == JobStatus::Running)
+            .count();
+        let queued_jobs = jobs
+            .values()
+            .filter(|j| j.assigned_to == node.profile.id && j.status == JobStatus::Queued)
+            .count();
+        let estimated_used_memory_mb: u64 = jobs
+            .values()
+            .filter(|j| j.assigned_to == node.profile.id)
+            .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+            .map(|j| j.resources.memory_mb as u64)
+            .sum();
+        let total_memory_mb = node.profile.resources.memory_mb as u64;
+        let estimated_free_memory_mb = total_memory_mb.saturating_sub(estimated_used_memory_mb);
+
+        let last_seen_ms_ago = last_seen
+            .get(&node.profile.id)
+            .map(|instant| instant.elapsed().as_millis() as u64);
+        let telemetry_fresh = last_seen_ms_ago.map(|ms| ms <= 15_000).unwrap_or(false);
+
+        telemetry.push(NodeTelemetry {
+            node_id: node.profile.id.to_string(),
+            idle: running_jobs == 0,
+            running_jobs,
+            queued_jobs,
+            estimated_used_memory_mb,
+            estimated_free_memory_mb,
+            last_seen_ms_ago,
+            telemetry_fresh,
+        });
+    }
+
+    telemetry.sort_by_key(|item| item.node_id.clone());
+    telemetry
 }
 
 async fn get_node(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -888,8 +1354,26 @@ pub async fn enqueue_job(
         runtime: request.runtime.clone(),
         tier_min: request.constraints.tier_min,
         require_docker: request.constraints.requires_capabilities.docker,
+        source: request.source.clone(),
+        command: request.command.clone(),
     };
-    let assigned = scheduler::pick_node(&state.local_node, &cluster_snapshot, &scheduling);
+    let running_jobs = {
+        let jobs = state.jobs.read().await;
+        let mut counts: HashMap<NodeId, usize> = HashMap::new();
+        for job in jobs.values() {
+            if job.status == JobStatus::Running {
+                *counts.entry(job.assigned_to).or_insert(0) += 1;
+            }
+        }
+        counts
+    };
+    let assigned = scheduler::pick_node(
+        &state.local_node,
+        &cluster_snapshot,
+        &scheduling,
+        &running_jobs,
+        &HashSet::new(),
+    );
 
     let now = Utc::now();
     let job_id = JobId::new();
@@ -900,6 +1384,13 @@ pub async fn enqueue_job(
         runtime: request.runtime.clone(),
         source: request.source.clone(),
         command: request.command.clone(),
+        resources: request.resources.clone(),
+        tier_min: request.constraints.tier_min,
+        require_docker: request.constraints.requires_capabilities.docker,
+        retry_count: 0,
+        max_retries: default_max_retries(),
+        attempted_nodes: Vec::new(),
+        cluster_retry_enabled: true,
         created_at: now,
         updated_at: now,
         exit_code: None,
@@ -921,9 +1412,13 @@ pub async fn enqueue_job(
     );
 
     if let Some(node_id) = assigned {
-        let _ = dispatch_to_assigned(state.clone(), node_id, job_id, request.clone()).await;
+        let dispatched =
+            dispatch_to_assigned(state.clone(), node_id, job_id, request.clone()).await;
+        if !dispatched {
+            spawn_retry_dispatch(state.clone(), job_id);
+        }
     } else {
-        spawn_retry_dispatch(state.clone(), job_id, request.clone(), scheduling);
+        spawn_retry_dispatch(state.clone(), job_id);
     }
 
     Ok(SubmitJobResponse {
@@ -952,6 +1447,13 @@ pub async fn enqueue_remote_job(
         runtime: request.runtime.clone(),
         source: request.source.clone(),
         command: request.command.clone(),
+        resources: request.resources.clone(),
+        tier_min: request.constraints.tier_min,
+        require_docker: request.constraints.requires_capabilities.docker,
+        retry_count: 0,
+        max_retries: default_max_retries(),
+        attempted_nodes: Vec::new(),
+        cluster_retry_enabled: false,
         created_at: now,
         updated_at: now,
         exit_code: None,
@@ -1001,6 +1503,7 @@ pub async fn apply_terminal_job_update(
     exit_code: Option<i32>,
     error: Option<String>,
 ) -> Result<(), String> {
+    let mut should_retry = false;
     let mut jobs = state.jobs.write().await;
     let Some(job) = jobs.get_mut(&job_id) else {
         return Err(format!("job {job_id} not found on origin node"));
@@ -1010,6 +1513,21 @@ pub async fn apply_terminal_job_update(
     job.exit_code = exit_code;
     job.error = error;
     job.updated_at = Utc::now();
+
+    if status == JobStatus::Failed {
+        if !job.attempted_nodes.contains(&job.assigned_to) {
+            job.attempted_nodes.push(job.assigned_to);
+        }
+        if job.cluster_retry_enabled && job.retry_count < job.max_retries {
+            job.retry_count = job.retry_count.saturating_add(1);
+            job.status = JobStatus::Queued;
+            job.error = Some(format!(
+                "retrying on another node (attempt {}/{})",
+                job.retry_count, job.max_retries
+            ));
+            should_retry = true;
+        }
+    }
 
     println!(
         "INFO Job terminal status updated from remote id={} status={:?} assigned_to={} exit_code={:?}",
@@ -1033,6 +1551,20 @@ pub async fn apply_terminal_job_update(
         Some(job_id),
     );
 
+    drop(jobs);
+
+    if should_retry {
+        publish_ops_event(
+            &state,
+            "job.retry.queued",
+            "warn",
+            format!("Job {} re-queued for retry on a different node", job_id),
+            None,
+            Some(job_id),
+        );
+        spawn_retry_dispatch(state.clone(), job_id);
+    }
+
     Ok(())
 }
 
@@ -1047,6 +1579,19 @@ async fn dispatch_to_assigned(
             "INFO Job dispatch local id={} runtime={:?} node_id={}",
             job_id, request.runtime, state.node_id,
         );
+        {
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(&job_id) {
+                if job.status == JobStatus::Queued {
+                    job.status = JobStatus::Running;
+                    job.assigned_to = state.node_id;
+                    if !job.attempted_nodes.contains(&state.node_id) {
+                        job.attempted_nodes.push(state.node_id);
+                    }
+                    job.updated_at = Utc::now();
+                }
+            }
+        }
         executor::spawn_job(
             job_id,
             request.runtime,
@@ -1088,6 +1633,9 @@ async fn dispatch_to_assigned(
                 if job.status == JobStatus::Queued {
                     job.status = JobStatus::Running;
                     job.assigned_to = assigned;
+                    if !job.attempted_nodes.contains(&assigned) {
+                        job.attempted_nodes.push(assigned);
+                    }
                     job.updated_at = Utc::now();
                 }
             }
@@ -1110,6 +1658,15 @@ async fn dispatch_to_assigned(
             "WARN Job dispatch remote failed id={} target_node={} endpoint={}",
             job_id, assigned, endpoint,
         );
+        {
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(&job_id) {
+                if !job.attempted_nodes.contains(&assigned) {
+                    job.attempted_nodes.push(assigned);
+                }
+                job.updated_at = Utc::now();
+            }
+        }
         publish_ops_event(
             &state,
             "job.dispatch_failed",
@@ -1123,15 +1680,44 @@ async fn dispatch_to_assigned(
     false
 }
 
-fn spawn_retry_dispatch(
-    state: AppState,
-    job_id: JobId,
-    request: SubmitJobRequest,
-    scheduling: SchedulingRequest,
-) {
+fn spawn_retry_dispatch(state: AppState, job_id: JobId) {
     tokio::spawn(async move {
         for _ in 0..60 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            let (request, scheduling, excluded_nodes) = {
+                let jobs = state.jobs.read().await;
+                let Some(job) = jobs.get(&job_id) else {
+                    return;
+                };
+                if job.status != JobStatus::Queued {
+                    return;
+                }
+
+                let request = SubmitJobRequest {
+                    runtime: job.runtime.clone(),
+                    source: job.source.clone(),
+                    command: job.command.clone(),
+                    resources: job.resources.clone(),
+                    constraints: SubmitConstraints {
+                        tier_min: job.tier_min,
+                        requires_capabilities: SubmitCapabilities {
+                            docker: job.require_docker,
+                        },
+                    },
+                };
+
+                let scheduling = SchedulingRequest {
+                    runtime: job.runtime.clone(),
+                    tier_min: job.tier_min,
+                    require_docker: job.require_docker,
+                    source: job.source.clone(),
+                    command: job.command.clone(),
+                };
+
+                let excluded_nodes: HashSet<NodeId> = job.attempted_nodes.iter().copied().collect();
+                (request, scheduling, excluded_nodes)
+            };
 
             {
                 let jobs = state.jobs.read().await;
@@ -1144,9 +1730,23 @@ fn spawn_retry_dispatch(
             }
 
             let cluster_snapshot = state.cluster.read().await.clone();
-            let Some(next_node) =
-                scheduler::pick_node(&state.local_node, &cluster_snapshot, &scheduling)
-            else {
+            let running_jobs = {
+                let jobs = state.jobs.read().await;
+                let mut counts: HashMap<NodeId, usize> = HashMap::new();
+                for job in jobs.values() {
+                    if job.status == JobStatus::Running {
+                        *counts.entry(job.assigned_to).or_insert(0) += 1;
+                    }
+                }
+                counts
+            };
+            let Some(next_node) = scheduler::pick_node(
+                &state.local_node,
+                &cluster_snapshot,
+                &scheduling,
+                &running_jobs,
+                &excluded_nodes,
+            ) else {
                 continue;
             };
 
@@ -1161,6 +1761,15 @@ fn spawn_retry_dispatch(
                 return;
             }
         }
+
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(&job_id) {
+            if job.status == JobStatus::Queued {
+                job.status = JobStatus::Failed;
+                job.error = Some("retry exhausted: no eligible node available".to_string());
+                job.updated_at = Utc::now();
+            }
+        }
     });
 }
 
@@ -1168,8 +1777,26 @@ async fn list_jobs(
     State(state): State<AppState>,
     Query(query): Query<ListJobsQuery>,
 ) -> Json<ListJobsResponse> {
-    let jobs = state.jobs.read().await;
-    let mut list: Vec<JobRecord> = jobs.values().cloned().collect();
+    let local_jobs = {
+        let jobs = state.jobs.read().await;
+        jobs.values().cloned().collect::<Vec<_>>()
+    };
+
+    let mut merged: HashMap<JobId, JobRecord> =
+        local_jobs.into_iter().map(|j| (j.job_id, j)).collect();
+
+    if !query.local_only {
+        for job in collect_remote_jobs(&state).await {
+            match merged.get(&job.job_id) {
+                Some(existing) if existing.updated_at >= job.updated_at => {}
+                _ => {
+                    merged.insert(job.job_id, job);
+                }
+            }
+        }
+    }
+
+    let mut list: Vec<JobRecord> = merged.into_values().collect();
     if let Some(status) = query.status {
         let expected = status.to_lowercase();
         list.retain(|j| format!("{:?}", j.status).to_lowercase() == expected);
@@ -1194,7 +1821,11 @@ async fn list_jobs(
     })
 }
 
-async fn get_job(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+async fn get_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<GetJobQuery>,
+) -> impl IntoResponse {
     let parsed = match uuid::Uuid::parse_str(&id) {
         Ok(v) => JobId(v),
         Err(_) => {
@@ -1210,12 +1841,75 @@ async fn get_job(State(state): State<AppState>, Path(id): Path<String>) -> impl 
     if let Some(job) = jobs.get(&parsed) {
         return (StatusCode::OK, Json(job)).into_response();
     }
+    drop(jobs);
+
+    if !query.local_only {
+        let peers: Vec<String> = {
+            let cluster = state.cluster.read().await;
+            cluster
+                .nodes
+                .values()
+                .filter(|n| n.profile.id != state.node_id)
+                .filter(|n| !n.rest_endpoint.is_empty())
+                .filter(|n| n.status == NodeStatus::Online)
+                .map(|n| n.rest_endpoint.clone())
+                .collect()
+        };
+
+        let client = reqwest::Client::new();
+        for rest_endpoint in peers {
+            let url = format!("http://{rest_endpoint}/v1/jobs/{id}?local_only=true");
+            let Ok(resp) = client.get(&url).send().await else {
+                continue;
+            };
+
+            if !resp.status().is_success() {
+                continue;
+            }
+
+            if let Ok(job) = resp.json::<JobRecord>().await {
+                return (StatusCode::OK, Json(job)).into_response();
+            }
+        }
+    }
 
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "job not found"})),
     )
         .into_response()
+}
+
+async fn collect_remote_jobs(state: &AppState) -> Vec<JobRecord> {
+    let peers: Vec<String> = {
+        let cluster = state.cluster.read().await;
+        cluster
+            .nodes
+            .values()
+            .filter(|n| n.profile.id != state.node_id)
+            .filter(|n| !n.rest_endpoint.is_empty())
+            .filter(|n| n.status == NodeStatus::Online)
+            .map(|n| n.rest_endpoint.clone())
+            .collect()
+    };
+
+    let client = reqwest::Client::new();
+    let mut jobs = Vec::new();
+    for rest_endpoint in peers {
+        let url = format!("http://{rest_endpoint}/v1/jobs?local_only=true");
+        let Ok(resp) = client.get(&url).send().await else {
+            continue;
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let Ok(remote) = resp.json::<ListJobsResponse>().await else {
+            continue;
+        };
+        jobs.extend(remote.jobs);
+    }
+
+    jobs
 }
 
 async fn delete_job(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {

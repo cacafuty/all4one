@@ -25,6 +25,8 @@ pub struct NodeCapabilities {
     pub wasm: bool,
     pub gpu_enabled: bool,
     #[serde(default)]
+    pub operating_system: String,
+    #[serde(default)]
     pub storage_node: bool,
 }
 
@@ -80,6 +82,7 @@ mod tests {
                         java: None,
                         wasm: true,
                         gpu_enabled: false,
+                        operating_system: "linux".to_string(),
                         storage_node: false,
                     },
                 },

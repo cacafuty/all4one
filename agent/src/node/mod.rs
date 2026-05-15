@@ -27,7 +27,7 @@ pub fn profile(config: &Config, id: NodeId) -> NodeProfile {
     let cpu_cores = std::thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(1);
-    let memory_mb = detect_memory_mb();
+    let memory_mb = detect_memory_mb(config.executor.memory_limit_mb);
 
     NodeProfile {
         id,
@@ -45,12 +45,23 @@ pub fn profile(config: &Config, id: NodeId) -> NodeProfile {
             java: config.capabilities.java.clone(),
             wasm: config.capabilities.wasm,
             gpu_enabled: config.capabilities.gpu_enabled,
+            operating_system: std::env::consts::OS.to_string(),
             storage_node: config.roles.storage,
         },
     }
 }
 
-fn detect_memory_mb() -> u32 {
+fn detect_memory_mb(memory_limit_mb: Option<u32>) -> u32 {
+    let system_memory = detect_system_memory_mb();
+
+    // Compute effective available: min(system_detected, config_limit)
+    match memory_limit_mb {
+        Some(limit) if limit > 0 => std::cmp::min(system_memory, limit),
+        _ => system_memory,
+    }
+}
+
+fn detect_system_memory_mb() -> u32 {
     #[cfg(target_os = "linux")]
     {
         if let Ok(raw) = fs::read_to_string("/proc/meminfo") {
@@ -83,7 +94,7 @@ mod tests {
     use super::*;
     use crate::config::schema::{
         CapabilitiesConfig, Config, DiscoveryConfig, ExecutorConfig, LoggingConfig, NetworkConfig,
-        NodeConfig, RolesConfig, SecurityConfig,
+        NodeConfig, RolesConfig, SecurityConfig, SharedVolumeConfig,
     };
     use std::path::Path;
 
@@ -121,7 +132,9 @@ mod tests {
                 docker_socket: "/var/run/docker.sock".to_string(),
                 cgroups_enabled: true,
                 output_max_bytes: 10 * 1024 * 1024,
+                memory_limit_mb: None,
             },
+            shared_volume: SharedVolumeConfig::default(),
             capabilities: CapabilitiesConfig {
                 docker: true,
                 java: None,

@@ -105,16 +105,6 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
         let node_id = Uuid::parse_str(&payload.node_id)
             .map_err(|_| Status::invalid_argument("invalid node_id in join request"))?;
 
-        // Join requests are served only by nodes that own CA private material.
-        // This is expected to be the cluster bootstrap/issuer node.
-        let cert_manager =
-            crate::certificates::CertificateManager::new(&self.state.config.node.data_dir);
-        if !cert_manager.has_ca_key() {
-            return Err(Status::failed_precondition(
-                "This node is not a certificate issuer (missing CA key)",
-            ));
-        }
-
         // Dual-mode enrollment support:
         // - CA mode (default): no join_secret required.
         // - Dev shared-secret mode: caller provides join_secret matching local config.
@@ -132,19 +122,11 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
             }
         }
 
-        cert_manager
-            .init_ca()
-            .await
-            .map_err(|e| Status::internal(format!("Failed to initialize CA: {}", e)))?;
-
-        let (node_cert_pem, node_key_pem) = cert_manager
-            .generate_node_cert(node_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to generate cert: {}", e)))?;
-
-        let ca_cert_pem = cert_manager
-            .load_ca_pem()
-            .map_err(|e| Status::internal(format!("Failed to load CA cert: {}", e)))?;
+        // Nodes without CA keys still accept join as a presence registration endpoint.
+        // This enables distributed entry points where any reachable node can ingest peers.
+        let cert_manager =
+            crate::certificates::CertificateManager::new(&self.state.config.node.data_dir);
+        let can_issue_certs = cert_manager.has_ca_key();
 
         println!("INFO gRPC Join request from node_id={} granted", node_id,);
 
@@ -166,6 +148,7 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
                     java: None,
                     wasm: false,
                     gpu_enabled: false,
+                    operating_system: String::new(),
                     storage_node: false,
                 },
             },
@@ -217,6 +200,33 @@ impl proto::agent_service_server::AgentService for ServiceImpl {
             "INFO Cluster state updated: node {} (tier={}) added to cluster at {} / {}",
             node_id, payload.tier, payload.grpc_endpoint, payload.rest_endpoint
         );
+        crate::discovery::remember_known_seed(
+            &self.state.config.node.data_dir,
+            &payload.grpc_endpoint,
+        );
+
+        if !can_issue_certs {
+            return Ok(Response::new(proto::JoinResponse {
+                node_cert_pem: String::new(),
+                node_key_pem: String::new(),
+                ca_cert_pem: String::new(),
+                expires_at_unix: 0,
+            }));
+        }
+
+        cert_manager
+            .init_ca()
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize CA: {}", e)))?;
+
+        let (node_cert_pem, node_key_pem) = cert_manager
+            .generate_node_cert(node_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to generate cert: {}", e)))?;
+
+        let ca_cert_pem = cert_manager
+            .load_ca_pem()
+            .map_err(|e| Status::internal(format!("Failed to load CA cert: {}", e)))?;
 
         Ok(Response::new(proto::JoinResponse {
             node_cert_pem,

@@ -40,6 +40,15 @@
 - Non-docker on Unix: best-effort hard memory limit via `RLIMIT_AS`
 - Non-docker on Windows: Job Object enforcement is planned
 
+## Executable portability rules
+
+When `runtime` is `executable`, the scheduler validates command portability against target node OS:
+
+- Windows targets only: `.exe`, `.bat`, `.cmd`, `cmd`, `cmd.exe`, `powershell`, `powershell.exe`, `pwsh`, `pwsh.exe`
+- Linux targets only: `.sh`, `sh`, `bash`
+
+If a job fails on one node and retries are available, it is re-queued for another compatible node. The failed node is excluded for that job retry sequence.
+
 ## Minimal example
 
 ```yaml

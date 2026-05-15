@@ -8,6 +8,8 @@ pub struct Config {
     pub discovery: DiscoveryConfig,
     pub security: SecurityConfig,
     pub executor: ExecutorConfig,
+    #[serde(default)]
+    pub shared_volume: SharedVolumeConfig,
     pub capabilities: CapabilitiesConfig,
     pub logging: LoggingConfig,
 }
@@ -72,6 +74,34 @@ pub struct ExecutorConfig {
     pub cgroups_enabled: bool,
     #[serde(default = "default_output_max")]
     pub output_max_bytes: usize,
+    #[serde(default)]
+    pub memory_limit_mb: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharedVolumeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_shared_volume_bucket")]
+    pub bucket: String,
+    #[serde(default)]
+    pub local_dir: Option<String>,
+    #[serde(default = "default_shared_volume_policy")]
+    pub policy: String,
+    #[serde(default = "default_scan_interval_seconds")]
+    pub scan_interval_seconds: u64,
+}
+
+impl Default for SharedVolumeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bucket: default_shared_volume_bucket(),
+            local_dir: None,
+            policy: default_shared_volume_policy(),
+            scan_interval_seconds: default_scan_interval_seconds(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,6 +156,18 @@ fn default_docker_socket() -> String {
 
 fn default_output_max() -> usize {
     10 * 1024 * 1024
+}
+
+fn default_shared_volume_bucket() -> String {
+    "shared-volume".to_string()
+}
+
+fn default_shared_volume_policy() -> String {
+    "warm".to_string()
+}
+
+fn default_scan_interval_seconds() -> u64 {
+    2
 }
 
 fn default_log_level() -> String {

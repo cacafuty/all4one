@@ -7,7 +7,7 @@ data_dir = "C:/ProgramData/all4one-local-peer"
 [roles]
 scheduler = false
 executor = true
-storage = false
+storage = true
 
 [network]
 bind_address = "0.0.0.0"
@@ -27,6 +27,15 @@ ca_cert_path = "C:/ProgramData/all4one-local/certs/ca.crt"
 max_concurrent_jobs = 2
 docker_socket = "npipe:////./pipe/docker_engine"
 cgroups_enabled = false
+# Optional: Limit this agent to maximum 2048 MB RAM (even if system has more)
+# memory_limit_mb = 2048
+
+[shared_volume]
+enabled = true
+bucket = "shared-volume"
+local_dir = "C:/ProgramData/all4one-local-peer/shared"
+policy = "warm"
+scan_interval_seconds = 2
 
 [capabilities]
 docker = true

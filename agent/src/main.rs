@@ -12,10 +12,12 @@ mod grpc_server;
 mod node;
 mod raft;
 mod scheduler;
+mod shared_volume;
 mod storage;
 
 use crate::api_rest::AppState;
 use crate::config::load;
+use crate::config::schema::Config;
 use crate::discovery::{mark_self_heartbeat, spawn_seed_discovery, upsert_self};
 use crate::gossip::spawn_failure_detector;
 use crate::node::{node_id, profile};
@@ -136,6 +138,16 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
         println!("INFO Existing node certificate bundle found, skipping enrollment");
     }
 
+    if !is_bootstrap_issuer && !config.discovery.seeds.is_empty() {
+        spawn_seed_presence_refresh(
+            config.clone(),
+            id,
+            advertise_host.clone(),
+            advertise_grpc_port,
+            advertise_rest_port,
+        );
+    }
+
     let raft_handle = if config.node.quorum_participant {
         let grpc_ep = format!("{}:{}", advertise_host, config.network.grpc_port);
         match raft::init_raft(id, &config.node.data_dir, &grpc_ep, vec![]).await {
@@ -169,6 +181,10 @@ async fn run_agent(config_path: &str) -> anyhow::Result<()> {
     };
 
     grpc_server::start_background(state.clone()).await;
+    shared_volume::spawn_shared_volume_listener(
+        state.config.clone(),
+        state.local_node.rest_endpoint.clone(),
+    );
 
     api_rest::serve(state).await
 }
@@ -201,9 +217,9 @@ async fn enroll_with_seed_ca(
             None
         };
 
-        for seed in &config.discovery.seeds {
+        for seed in crate::discovery::resolved_seeds(config) {
             match crate::grpc_client::request_join_with_ca(
-                seed,
+                &seed,
                 node_id.0,
                 join_secret,
                 ca_cert_path,
@@ -215,6 +231,16 @@ async fn enroll_with_seed_ca(
             .await
             {
                 Ok(bundle) => {
+                    if bundle.node_cert_pem.trim().is_empty()
+                        || bundle.node_key_pem.trim().is_empty()
+                        || bundle.ca_cert_pem.trim().is_empty()
+                    {
+                        last_err = Some(anyhow::anyhow!(
+                            "seed={} does not issue certificates; try a CA issuer seed",
+                            seed
+                        ));
+                        continue;
+                    }
                     cert_manager.save_node_cert(
                         &bundle.node_cert_pem,
                         &bundle.node_key_pem,
@@ -235,4 +261,68 @@ async fn enroll_with_seed_ca(
     }
 
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("No seed endpoints configured for enrollment")))
+}
+
+fn spawn_seed_presence_refresh(
+    config: Arc<Config>,
+    node_id: all4one_common::NodeId,
+    advertise_host: String,
+    advertise_grpc_port: u16,
+    advertise_rest_port: u16,
+) {
+    tokio::spawn(async move {
+        let mut failure_streak: u32 = 0;
+
+        loop {
+            let join_secret = if config.security.mode == "shared-secret" {
+                let secret = config.security.shared_secret.trim();
+                if secret.is_empty() {
+                    None
+                } else {
+                    Some(secret)
+                }
+            } else {
+                None
+            };
+
+            let mut any_success = false;
+            let mut last_err: Option<String> = None;
+            for seed in crate::discovery::resolved_seeds(config.as_ref()) {
+                match crate::grpc_client::announce_presence(
+                    &seed,
+                    node_id.0,
+                    join_secret,
+                    config.node.tier,
+                    &advertise_host,
+                    advertise_grpc_port,
+                    advertise_rest_port,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        any_success = true;
+                    }
+                    Err(e) => {
+                        last_err = Some(format!("seed={} join refresh failed: {}", seed, e));
+                    }
+                }
+            }
+
+            if any_success {
+                if failure_streak > 0 {
+                    println!("INFO Presence refresh restored after transient failures");
+                }
+                failure_streak = 0;
+            } else {
+                failure_streak = failure_streak.saturating_add(1);
+                if failure_streak.is_multiple_of(6) {
+                    if let Some(err) = &last_err {
+                        eprintln!("WARN {}", err);
+                    }
+                }
+            }
+
+            sleep(Duration::from_secs(10)).await;
+        }
+    });
 }

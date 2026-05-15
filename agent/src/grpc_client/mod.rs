@@ -78,6 +78,37 @@ pub async fn request_join_with_ca(
     })
 }
 
+pub async fn announce_presence(
+    endpoint: &str,
+    node_id: Uuid,
+    join_secret: Option<&str>,
+    tier: u8,
+    advertise_host: &str,
+    advertise_grpc_port: u16,
+    advertise_rest_port: u16,
+) -> Result<(), tonic::Status> {
+    let target = normalize_endpoint(endpoint);
+    let channel = Channel::from_shared(target)
+        .map_err(|e| tonic::Status::internal(e.to_string()))?
+        .connect()
+        .await
+        .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+
+    let mut client = proto::agent_service_client::AgentServiceClient::new(channel);
+    let _ = client
+        .join(proto::JoinRequest {
+            node_id: node_id.to_string(),
+            csr_pem: String::new(),
+            join_secret: join_secret.unwrap_or_default().to_string(),
+            tier: tier as u32,
+            grpc_endpoint: format!("{}:{}", advertise_host, advertise_grpc_port),
+            rest_endpoint: format!("{}:{}", advertise_host, advertise_rest_port),
+        })
+        .await?;
+
+    Ok(())
+}
+
 pub async fn submit_remote(
     endpoint: &str,
     job_id: JobId,

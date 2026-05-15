@@ -2,10 +2,15 @@ use crate::config::schema::Config;
 use all4one_common::{ClusterState, NodeId, NodeInfo, NodeStatus};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
+
+const KNOWN_SEEDS_FILE: &str = "known-seeds.txt";
 
 /// Minimal peer info returned by GET /v1/internal/nodes (unauthenticated).
 #[derive(Deserialize)]
@@ -31,8 +36,8 @@ pub fn spawn_seed_discovery(
         let client = reqwest::Client::new();
         loop {
             // Discovery phase 1: Poll configured seeds
-            for seed in &config.discovery.seeds {
-                let rest_addr = seed_to_rest(seed);
+            for seed in resolved_seeds(config.as_ref()) {
+                let rest_addr = seed_to_rest(&seed);
 
                 // Ask this seed for the full peer list it knows about.
                 // A single reachable seed is enough to discover the whole cluster.
@@ -72,6 +77,7 @@ pub fn spawn_seed_discovery(
                     if id == self_id {
                         continue;
                     }
+                    remember_known_seed(&config.node.data_dir, &peer.grpc_endpoint);
                     // Only update endpoint info; preserve existing profile/capabilities if known.
                     state
                         .nodes
@@ -98,6 +104,7 @@ pub fn spawn_seed_discovery(
                                     java: None,
                                     wasm: false,
                                     gpu_enabled: false,
+                                    operating_system: String::new(),
                                     storage_node: false,
                                 },
                             },
@@ -150,6 +157,7 @@ pub fn spawn_seed_discovery(
                     if id == self_id {
                         continue;
                     }
+                    remember_known_seed(&config.node.data_dir, &peer.grpc_endpoint);
                     state
                         .nodes
                         .entry(id)
@@ -175,6 +183,7 @@ pub fn spawn_seed_discovery(
                                     java: None,
                                     wasm: false,
                                     gpu_enabled: false,
+                                    operating_system: String::new(),
                                     storage_node: false,
                                 },
                             },
@@ -191,6 +200,54 @@ pub fn spawn_seed_discovery(
             sleep(Duration::from_secs(5)).await;
         }
     });
+}
+
+pub fn resolved_seeds(config: &Config) -> Vec<String> {
+    let mut merged: HashSet<String> = config.discovery.seeds.iter().cloned().collect();
+    merged.extend(load_known_seeds(&config.node.data_dir));
+    let mut out: Vec<String> = merged.into_iter().collect();
+    out.sort();
+    out
+}
+
+pub fn load_known_seeds(data_dir: &str) -> Vec<String> {
+    let path = known_seeds_path(data_dir);
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| line.contains(':'))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+pub fn remember_known_seed(data_dir: &str, endpoint: &str) {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() || !endpoint.contains(':') {
+        return;
+    }
+
+    let path = known_seeds_path(data_dir);
+    let mut merged: HashSet<String> = load_known_seeds(data_dir).into_iter().collect();
+    if !merged.insert(endpoint.to_string()) {
+        return;
+    }
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let mut values: Vec<String> = merged.into_iter().collect();
+    values.sort();
+    let payload = values.join("\n");
+    let _ = fs::write(path, payload);
+}
+
+fn known_seeds_path(data_dir: &str) -> PathBuf {
+    PathBuf::from(data_dir).join(KNOWN_SEEDS_FILE)
 }
 
 async fn upsert_peer(

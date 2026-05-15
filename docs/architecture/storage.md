@@ -7,8 +7,10 @@ All4One storage provides an S3-like object API backed by local chunk files, with
 - Chunking, hashing (SHA-256 per shard and full object)
 - Tiered policy (`hot` / `warm` / `cold` / `archive`)
 - Compression with zstd (level varies by policy)
+- Custom all4one compression container (`A4O1` magic + codec metadata) for fast compressed-payload detection
 - Erasure coding (data shards + parity shards; real RS planned)
 - Metadata index via `sled` embedded DB
+- Per-agent access timestamp (`last_accessed_at`) to drive cold-object compression behavior
 - Node capability flag: `roles.storage = true` enables this role
 
 ## Storage policies
@@ -23,15 +25,23 @@ All4One storage provides an S3-like object API backed by local chunk files, with
 ## Write path
 
 1. REST client sends `PUT /v1/storage/{bucket}/{key}` with optional `X-All4One-Policy` header.
-2. The local storage node compresses, erasure-codes, and writes shards to `{data_dir}/chunks/{bucket}/`.
-3. Object metadata is written to the local sled index (`{data_dir}/objects.db`).
-4. The node reads all shards and fans them out to every online peer with `capabilities.storage_node = true` via the gRPC `TransferChunk` RPC (fire-and-forget, eventual consistency).
+2. The local node resolves an effective policy from local recency:
+	- if this node accessed the object in the last 24h, keep the requested policy,
+	- otherwise force `archive` (strong compression).
+3. The local storage node compresses, erasure-codes, and writes shards to `{data_dir}/chunks/{bucket}/`.
+	- Compressed payloads are wrapped in all4one format, preserving compatibility with legacy plain-zstd objects.
+4. Object metadata is written to the local sled index (`{data_dir}/objects.db`).
+5. The node selects replication targets preferring lower tiers (tier `0` first) and pushes shards via gRPC `TransferChunk`.
+6. Target count is at least 3 sites total (writer + peers) when enough online agents exist; with fewer agents online, it uses all available sites.
+7. Replica copies are stored as `archive` and do not update `last_accessed_at`; they stay highly compressed until the replica node actually serves a read.
 
 ## Read path
 
 1. REST client sends `GET /v1/storage/{bucket}/{key}`.
 2. The node reads shards from local disk, reconstructs the object via `decode_erasure`, decompresses, and verifies SHA-256.
-3. If a local data shard is missing, future work will fetch it from a peer via the `FetchChunk` gRPC RPC.
+3. Local metadata `last_accessed_at` is refreshed.
+4. If the object is not readable locally, the node performs parallel peer read-through over peer REST endpoints and returns the first successful response.
+5. Read-through results are cached locally and marked as accessed.
 
 ## Node-to-node transport (gRPC)
 
@@ -66,3 +76,22 @@ The internal shard distribution uses **gRPC** (port `:7947`), not REST. This is 
 - Enable with `roles.storage = true` in agent config.
 - Keep `data_dir` on a writable, monitored filesystem.
 - Use `GET /v1/cluster/diagnostics` for storage health and disk usage.
+
+## Shared volume folder listener
+
+Agents can watch a local folder that represents the shared volume and sync filesystem changes to distributed object storage.
+
+- New/modified files: synced as `PUT /v1/storage/{bucket}/{key...}`
+- Removed files: synced as `DELETE /v1/storage/{bucket}/{key...}`
+- Sync is polling-based to remain cross-platform (including Windows)
+
+Configuration block:
+
+```toml
+[shared_volume]
+enabled = true
+bucket = "shared-volume"
+local_dir = "C:/ProgramData/all4one-local/shared" # optional; default: {data_dir}/shared
+policy = "warm"
+scan_interval_seconds = 2
+```
