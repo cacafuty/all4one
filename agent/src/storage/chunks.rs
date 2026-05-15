@@ -46,7 +46,10 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
         let version = data[4];
         let codec = data[5];
         if version != ALL4ONE_VERSION {
-            return Err(anyhow!("Unsupported all4one compression version: {}", version));
+            return Err(anyhow!(
+                "Unsupported all4one compression version: {}",
+                version
+            ));
         }
         if codec != ALL4ONE_CODEC_ZSTD {
             return Err(anyhow!("Unsupported all4one codec: {}", codec));
@@ -369,9 +372,15 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let data = b"warm storage test with compression and erasure coding";
 
-        let metadata =
-            put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Warm, true)
-                .await?;
+        let metadata = put_chunks(
+            temp_dir.path(),
+            "bucket",
+            "key",
+            data,
+            StoragePolicy::Warm,
+            true,
+        )
+        .await?;
 
         assert_eq!(metadata.policy, "warm");
         assert_eq!(metadata.replicas, 1);
@@ -386,7 +395,15 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let data = b"test data for corruption detection";
 
-        put_chunks(temp_dir.path(), "bucket", "key", data, StoragePolicy::Hot, true).await?;
+        put_chunks(
+            temp_dir.path(),
+            "bucket",
+            "key",
+            data,
+            StoragePolicy::Hot,
+            true,
+        )
+        .await?;
 
         // Corrupt the stored data
         let chunks_dir = temp_dir.path().join("chunks").join("bucket");

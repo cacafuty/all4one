@@ -25,9 +25,7 @@ pub fn spawn_shared_volume_listener(config: Arc<Config>, local_rest_endpoint: St
     }
 
     if !config.roles.storage {
-        eprintln!(
-            "WARN Shared volume listener enabled but roles.storage=false; watcher disabled"
-        );
+        eprintln!("WARN Shared volume listener enabled but roles.storage=false; watcher disabled");
         return;
     }
 
@@ -113,7 +111,9 @@ pub fn spawn_shared_volume_listener(config: Arc<Config>, local_rest_endpoint: St
             }
 
             for removed_key in previous.keys().filter(|k| !current.contains_key(*k)) {
-                if let Err(e) = delete_object(&client, &local_rest_endpoint, &bucket, removed_key).await {
+                if let Err(e) =
+                    delete_object(&client, &local_rest_endpoint, &bucket, removed_key).await
+                {
                     eprintln!(
                         "WARN Shared volume delete sync failed key={} err={}",
                         removed_key, e
@@ -230,7 +230,12 @@ async fn upload_object(
     Ok(())
 }
 
-async fn delete_object(client: &Client, rest_endpoint: &str, bucket: &str, key: &str) -> anyhow::Result<()> {
+async fn delete_object(
+    client: &Client,
+    rest_endpoint: &str,
+    bucket: &str,
+    key: &str,
+) -> anyhow::Result<()> {
     let url = storage_url(rest_endpoint, bucket, key)?;
     let response = client.delete(url).send().await?;
     if response.status().as_u16() == 404 {

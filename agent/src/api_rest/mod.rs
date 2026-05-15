@@ -255,7 +255,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/storage/:bucket",
             get(list_bucket_objects).post(create_bucket),
         )
-        .route("/v1/storage-explorer/:bucket", get(list_bucket_objects_explorer))
+        .route(
+            "/v1/storage-explorer/:bucket",
+            get(list_bucket_objects_explorer),
+        )
         .route(
             "/v1/storage/:bucket/*key",
             get(get_object_handler)
@@ -649,14 +652,16 @@ async fn list_bucket_objects_explorer(
         };
         peers_reached += 1;
         for obj in objects {
-            let entry = merged.entry(obj.key.clone()).or_insert(StorageExplorerObject {
-                key: obj.key.clone(),
-                size_bytes: obj.size_bytes,
-                policy: obj.policy.clone(),
-                last_accessed_at: obj.last_accessed_at.clone(),
-                local_present: false,
-                available_on: Vec::new(),
-            });
+            let entry = merged
+                .entry(obj.key.clone())
+                .or_insert(StorageExplorerObject {
+                    key: obj.key.clone(),
+                    size_bytes: obj.size_bytes,
+                    policy: obj.policy.clone(),
+                    last_accessed_at: obj.last_accessed_at.clone(),
+                    local_present: false,
+                    available_on: Vec::new(),
+                });
 
             if entry.last_accessed_at.is_none() {
                 entry.last_accessed_at = obj.last_accessed_at;
@@ -710,9 +715,7 @@ async fn put_object_handler(
     };
 
     let data_dir = &state.config.node.data_dir;
-    let is_replica_sync = headers
-        .get("x-all4one-replication-hop")
-        .is_some();
+    let is_replica_sync = headers.get("x-all4one-replication-hop").is_some();
     let effective_policy = if is_replica_sync {
         crate::storage::StoragePolicy::Archive
     } else {
@@ -746,8 +749,7 @@ async fn put_object_handler(
             .nodes
             .values()
             .filter(|n| {
-                n.status == all4one_common::NodeStatus::Online
-                    && n.profile.id != state.node_id
+                n.status == all4one_common::NodeStatus::Online && n.profile.id != state.node_id
             })
             .map(|n| {
                 (
@@ -884,7 +886,12 @@ async fn fetch_object_from_peers(
             } else {
                 format!("http://{endpoint}")
             };
-            let url = format!("{}/v1/storage/{}/{}", base.trim_end_matches('/'), bucket, key);
+            let url = format!(
+                "{}/v1/storage/{}/{}",
+                base.trim_end_matches('/'),
+                bucket,
+                key
+            );
 
             let Ok(resp) = client.get(&url).send().await else {
                 return None;
@@ -951,13 +958,16 @@ async fn get_object_handler(
                     .nodes
                     .values()
                     .filter(|n| {
-                        n.status == all4one_common::NodeStatus::Online && n.profile.id != state.node_id
+                        n.status == all4one_common::NodeStatus::Online
+                            && n.profile.id != state.node_id
                     })
                     .map(|n| n.rest_endpoint.clone())
                     .collect()
             };
 
-            if let Some((remote_data, remote_etag)) = fetch_object_from_peers(peers, &bucket, &key).await {
+            if let Some((remote_data, remote_etag)) =
+                fetch_object_from_peers(peers, &bucket, &key).await
+            {
                 let _ = crate::storage::put_object(
                     data_dir,
                     &bucket,
